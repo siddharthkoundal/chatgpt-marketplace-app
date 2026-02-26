@@ -1,1 +1,256 @@
 # chatgpt-marketplace-app
+
+> A **Model Context Protocol (MCP) server** that allows ChatGPT and AI agents to fetch live product offers from the Synchrony Marketplace API in real-time.
+
+Built at **Synchrony Financial** by the Marketplace AI team.
+
+---
+
+## Table of Contents
+
+- [What is MCP?](#what-is-mcp)
+- [Architecture Overview](#architecture-overview)
+- [Project Structure](#project-structure)
+- [Data Flow](#data-flow)
+- [Transport Modes](#transport-modes)
+- [Getting Started](#getting-started)
+- [Available Scripts](#available-scripts)
+- [Environment Variables](#environment-variables)
+- [Upgrading to the Real API](#upgrading-to-the-real-api)
+
+---
+
+## What is MCP?
+
+**Model Context Protocol (MCP)** is an open standard that lets AI models (like ChatGPT) call external tools and fetch live data — similar to how a browser uses REST APIs, but designed specifically for LLM tool use.
+
+```
+ChatGPT ──────── MCP Protocol ────────► MCP Server ────► Your API
+         "call get_offers tool"         (this repo)      (Synchrony)
+         ◄──────────────────────────────              ◄──────────
+              Returns structured JSON
+```
+
+When a user asks ChatGPT *"What mattress deals are available under $1000?"*, ChatGPT automatically:
+1. Recognizes it needs real data
+2. Calls our `get_offers` tool via MCP
+3. Receives a structured JSON list of offers
+4. Summarizes and presents them to the user
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        CLIENT LAYER                                  │
+│                                                                      │
+│   ChatGPT / AI Agent / MCP Inspector                                │
+│   (Sends JSON-RPC tool call requests)                               │
+└───────────────────────────┬─────────────────────────────────────────┘
+                            │ MCP Protocol (JSON-RPC 2.0)
+                            │
+              ┌─────────────▼──────────────┐
+              │      TRANSPORT LAYER        │
+              │                            │
+              │  stdio (local/dev)         │  ← src/index.ts
+              │  HTTP + SSE (remote/ngrok) │  ← src/server.ts
+              └─────────────┬──────────────┘
+                            │
+              ┌─────────────▼──────────────┐
+              │       TOOL REGISTRY         │
+              │                            │
+              │  tools/list  → get_offers  │  ← registers tool + schema
+              │  tools/call  → handler     │  ← routes calls to handler
+              └─────────────┬──────────────┘
+                            │
+              ┌─────────────▼──────────────┐
+              │      VALIDATION LAYER       │
+              │                            │
+              │  Zod schemas               │  ← src/schemas/offerSchema.ts
+              │  • GetOffersInputSchema     │    validates category, maxPrice
+              │  • OffersResponseSchema     │    validates offer shape
+              └─────────────┬──────────────┘
+                            │
+              ┌─────────────▼──────────────┐
+              │       API CLIENT LAYER      │
+              │                            │
+              │  fetchOffersFromSynchrony  │  ← src/api/synchronyClient.ts
+              │  (mock now → real later)   │
+              └─────────────┬──────────────┘
+                            │
+              ┌─────────────▼──────────────┐
+              │    SYNCHRONY MARKETPLACE    │
+              │         API (External)      │
+              │  (hardcoded mock for now)  │
+              └────────────────────────────┘
+```
+
+---
+
+## Project Structure
+
+```
+chatgpt-app/
+│
+├── src/
+│   ├── index.ts                  # Entry point: stdio transport (local dev & MCP Inspector)
+│   ├── server.ts                 # Entry point: HTTP/SSE transport (ngrok & remote clients)
+│   │
+│   ├── schemas/
+│   │   └── offerSchema.ts        # Zod schemas: input args + offer output shape
+│   │
+│   ├── api/
+│   │   └── synchronyClient.ts    # API client (mock data, ready for real API)
+│   │
+│   └── tools/
+│       └── getOffers.ts          # Tool handler: validate → fetch → format → respond
+│
+├── package.json                  # Dependencies + npm scripts
+├── tsconfig.json                 # TypeScript: ES2022, NodeNext, strict mode
+├── .gitignore
+├── README.md                     # ← You are here
+└── TESTING.md                    # Step-by-step testing guide
+```
+
+---
+
+## Data Flow
+
+Here is the exact journey of a single tool call from ChatGPT to a response:
+
+```
+1. ChatGPT sends:
+   { "method": "tools/call", "params": { "name": "get_offers", "arguments": { "category": "beds", "maxPrice": 1000 } } }
+
+2. src/index.ts (or server.ts)
+   └── CallToolRequestSchema handler routes to: handleGetOffers(args)
+
+3. src/tools/getOffers.ts :: handleGetOffers()
+   └── Zod safeParse validates args
+       ├── FAIL → returns { isError: true, content: [{ type: "text", text: "validation error..." }] }
+       └── PASS → calls fetchOffersFromSynchrony("beds", 1000)
+
+4. src/api/synchronyClient.ts :: fetchOffersFromSynchrony()
+   └── Filters mock offers by category + price
+       └── Returns: Offer[]
+
+5. src/tools/getOffers.ts
+   └── Wraps in envelope: { category, totalOffers, offers: [...] }
+       └── Returns: { content: [{ type: "text", text: "<JSON string>" }] }
+
+6. ChatGPT receives the JSON and presents offers to the user.
+```
+
+---
+
+## Transport Modes
+
+This server supports two transport modes. Use the right one depending on your context:
+
+| Mode | File | Command | Use When |
+|------|------|---------|----------|
+| **stdio** | `src/index.ts` | `npm run dev` | Local MCP Inspector, Claude Desktop |
+| **HTTP/SSE** | `src/server.ts` | `npm run dev:http` | Remote access via ngrok, ChatGPT Agents SDK |
+
+### How HTTP/SSE Transport Works
+
+```
+Client (ChatGPT)                    Our Server (src/server.ts)
+      │                                       │
+      │── GET /sse ────────────────────────►  │  Opens SSE stream
+      │  ◄──── event: endpoint ──────────────│  Server sends: /messages?sessionId=<id>
+      │                                       │
+      │── POST /messages?sessionId=<id> ────► │  Client sends tool call
+      │    body: { method: "tools/call", ... }│
+      │                                       │  Server processes request
+      │  ◄──── SSE event: response ──────────│  Response arrives via SSE stream
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+- Node.js v18+
+- npm v9+
+- [ngrok](https://ngrok.com) (only for remote/HTTP mode)
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/siddharthkoundal/chatgpt-marketplace-app.git
+cd chatgpt-marketplace-app
+
+# Install dependencies
+npm install
+```
+
+### Running Locally (stdio — for MCP Inspector)
+
+```bash
+npm run dev
+```
+
+### Running for Remote Access (HTTP/SSE — for ChatGPT SDK / ngrok)
+
+```bash
+# Terminal 1: Start HTTP server
+npm run dev:http
+# → 🚀 Server running on port 3000
+
+# Terminal 2: Expose via ngrok
+ngrok http 3000
+# → Forwarding: https://abc123.ngrok-free.app → localhost:3000
+```
+
+See [TESTING.md](./TESTING.md) for detailed testing steps.
+
+---
+
+## Available Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start server with **stdio** transport (local MCP Inspector) |
+| `npm run dev:http` | Start server with **HTTP/SSE** transport (ngrok / remote) |
+| `npm run build` | Compile TypeScript to `dist/` |
+| `npm start` | Run compiled JS from `dist/` |
+
+---
+
+## Environment Variables
+
+Create a `.env` file in the root (never commit this):
+
+```env
+PORT=3000                          # HTTP server port (default: 3000)
+SYNCHRONY_API_BASE_URL=https://... # Real Synchrony API base URL (when available)
+SYNCHRONY_API_KEY=your-key-here    # API key for authentication
+```
+
+> ⚠️ `.env` is listed in `.gitignore`. Never commit API keys.
+
+---
+
+## Upgrading to the Real API
+
+In `src/api/synchronyClient.ts`, replace the mock implementation with:
+
+```typescript
+import axios from 'axios';
+
+const BASE_URL = process.env.SYNCHRONY_API_BASE_URL ?? '';
+const API_KEY  = process.env.SYNCHRONY_API_KEY ?? '';
+
+const response = await axios.get(`${BASE_URL}/offers`, {
+  headers: { Authorization: `Bearer ${API_KEY}` },
+  params: { category, maxPrice },
+});
+
+// This validates the real API response matches our Zod schema
+return OffersResponseSchema.parse(response.data);
+```
+
+The Zod schema in `src/schemas/offerSchema.ts` will automatically catch any shape mismatches between the real API and what our tool expects — acting as a live contract test.
