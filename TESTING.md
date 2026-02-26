@@ -241,4 +241,96 @@ Then open MCP Inspector, set transport to SSE, set URL to the ngrok `/sse` URL, 
 | `POST /messages 400 Bad Request` | Missing `?sessionId=` param | Let the Inspector handle this — don't POST manually without the sessionId from the SSE endpoint event |
 | `POST /sse 404 Not Found` | Client posted to wrong URL | `/sse` is GET only. POST goes to `/messages` |
 | `No offers found` | Category not in mock data | Try: `beds`, `electronics`, `appliances` |
-| Tool returns validation error | Wrong arg type | `category` must be a string, `maxPrice` must be a number |
+| `Tool returns validation error` | Wrong arg type | `category` must be a string, `maxPrice` must be a number |
+
+---
+
+## Method 6 — OpenAI Responses API (Direct ChatGPT Integration)
+
+> **Source:** [OpenAI Docs — MCP Tool Guide](https://developers.openai.com/cookbook/examples/mcp/mcp_tool_guide/)
+
+This tests your server from the **OpenAI Responses API** side — the same path ChatGPT uses internally when it calls your tool.
+
+### Prerequisites
+
+- Server running via `npm run dev:http` + ngrok exposed
+- OpenAI API key with access to `gpt-4o` or `gpt-4.1`
+
+### Test with Python (OpenAI SDK)
+
+```python
+import openai
+
+client = openai.OpenAI(api_key="sk-...")
+
+response = client.responses.create(
+    model="gpt-4o",
+    tools=[
+        {
+            "type": "mcp",
+            "server_label": "synchrony-marketplace",
+            "server_url": "https://<your-ngrok-url>.ngrok-free.app",   # your ngrok URL
+            "require_approval": "never",                                 # auto-approve tool calls
+        }
+    ],
+    input="What bed offers are available under $1000?",
+)
+
+print(response.output_text)
+```
+
+**What happens:**
+1. Responses API connects to your ngrok URL, calls `tools/list`, discovers `get_offers`
+2. Model decides to call `get_offers` with `{"category": "beds", "maxPrice": 1000}`
+3. Responses API calls `tools/call` on your server, gets back the offer JSON
+4. Model composes a response and returns it as `response.output_text`
+
+### Test with the OpenAI Playground
+
+1. Go to [platform.openai.com/playground](https://platform.openai.com/playground)
+2. **Tools** → **Add MCP server**
+3. Enter your ngrok URL in the server URL field
+4. Type: *"Show me electronics deals under $500"*
+5. Watch the model call `get_offers` and use the result
+
+---
+
+## OpenAI-Specific Checklist
+
+Before submitting your app to ChatGPT's app directory, verify these items per the [official OpenAI Apps SDK docs](https://developers.openai.com/apps-sdk/build/mcp-server):
+
+### ✅ Tool Annotations (Required)
+Per OpenAI docs, all tools must declare annotations. Add these to `registerTool()` in `src/index.ts` and `src/server.ts`:
+
+```typescript
+annotations: {
+  readOnlyHint: true,      // get_offers reads data only
+  openWorldHint: false,    // scoped to Synchrony Marketplace
+  destructiveHint: false,  // no deletes or side effects
+}
+```
+
+| Annotation | Required When | Our Value |
+|-----------|--------------|-----------|
+| `readOnlyHint: true` | Tool only fetches data | ✅ |
+| `openWorldHint: false` | Tool is scoped to one system | ✅ |
+| `destructiveHint: false` | Tool has no irreversible effects | ✅ |
+
+### ⚠️ Transport: SSE → Streamable HTTP for Production
+The official docs state SSE transport is **legacy**. For production ChatGPT integration:
+- Current: `SSEServerTransport` from `server/sse.js` (works for testing)
+- Recommended: `StreamableHttpServerTransport` from `server/streamableHttp.js`
+
+### ✅ HTTPS Required
+ChatGPT requires an HTTPS endpoint. During dev, ngrok provides this automatically.
+For production: deploy to Cloudflare Workers, Fly.io, Vercel, or AWS with TLS.
+
+### ✅ Tool Descriptions = Your UX
+From OpenAI docs: *"The model inspects tool descriptors to decide when a tool fits the user's request — treat names, descriptions, and schemas as part of your UX."*
+
+Review `get_offers` description in `src/index.ts` to make it as clear as possible for the model.
+
+### ✅ Make Handlers Idempotent
+From OpenAI docs: *"Design handlers to be idempotent — the model may retry calls."*
+Our current `get_offers` is already idempotent (read-only, returns same data for same input). ✅
+

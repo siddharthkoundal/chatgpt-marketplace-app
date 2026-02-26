@@ -57,21 +57,19 @@ When a user asks ChatGPT *"What mattress deals are available under $1000?"*, Cha
               │  HTTP + SSE (remote/ngrok) │  ← src/server.ts
               └─────────────┬──────────────┘
                             │
-              ┌─────────────▼──────────────┐
-              │       TOOL REGISTRY         │
-              │                            │
-              │  tools/list  → get_offers  │  ← registers tool + schema
-              │  tools/call  → handler     │  ← routes calls to handler
-              └─────────────┬──────────────┘
-                            │
-              ┌─────────────▼──────────────┐
-              │      VALIDATION LAYER       │
-              │                            │
-              │  Zod schemas               │  ← src/schemas/offerSchema.ts
-              │  • GetOffersInputSchema     │    validates category, maxPrice
-              │  • OffersResponseSchema     │    validates offer shape
-              └─────────────┬──────────────┘
-                            │
+              ┌─────────────▼──────────────────────────┐
+              │   McpServer  (SDK v1.x high-level API)  │
+              │                                         │
+              │  registerTool("get_offers", {            │
+              │    inputSchema: GetOffersInputZodShape,  │  ← offerSchema.ts
+              │    description: "...",                   │
+              │  }, handler)                            │
+              │                                         │
+              │  • Serves  tools/list  automatically   │
+              │  • Validates args via Zod automatically │
+              │  • Routes  tools/call  to handler       │
+              └─────────────┬───────────────────────────┘
+                            │ pre-validated GetOffersInput
               ┌─────────────▼──────────────┐
               │       API CLIENT LAYER      │
               │                            │
@@ -123,13 +121,14 @@ Here is the exact journey of a single tool call from ChatGPT to a response:
 1. ChatGPT sends:
    { "method": "tools/call", "params": { "name": "get_offers", "arguments": { "category": "beds", "maxPrice": 1000 } } }
 
-2. src/index.ts (or server.ts)
-   └── CallToolRequestSchema handler routes to: handleGetOffers(args)
+2. src/index.ts (or server.ts) — McpServer receives the tool call
+   └── SDK automatically validates args against GetOffersInputZodShape (Zod)
+       ├── FAIL → SDK returns a validation error to ChatGPT (no handler called)
+       └── PASS → calls the registered handler with typed GetOffersInput args
 
-3. src/tools/getOffers.ts :: handleGetOffers()
-   └── Zod safeParse validates args
-       ├── FAIL → returns { isError: true, content: [{ type: "text", text: "validation error..." }] }
-       └── PASS → calls fetchOffersFromSynchrony("beds", 1000)
+3. src/tools/getOffers.ts :: handleGetOffers(args: GetOffersInput)
+   └── No Zod safeParse here — SDK already guaranteed types are correct
+       └── calls fetchOffersFromSynchrony("beds", 1000)
 
 4. src/api/synchronyClient.ts :: fetchOffersFromSynchrony()
    └── Filters mock offers by category + price
@@ -166,6 +165,85 @@ Client (ChatGPT)                    Our Server (src/server.ts)
       │                                       │  Server processes request
       │  ◄──── SSE event: response ──────────│  Response arrives via SSE stream
 ```
+
+---
+
+## OpenAI Integration
+
+> **Source:** [OpenAI Apps SDK — Build your MCP server](https://developers.openai.com/apps-sdk/build/mcp-server) · [MCP concept overview](https://developers.openai.com/apps-sdk/concepts/mcp-server/)
+
+### How ChatGPT Uses Your MCP Server
+
+When a user types a prompt in ChatGPT, the model:
+1. Reads your tool descriptors (name, description, input schema)
+2. Decides whether to call a tool based on user intent
+3. Sends a `tools/call` request with arguments
+4. Receives your JSON response and narrates it to the user
+
+> **Important:** *You define the tools, but ChatGPT's model decides when to call them* — based on the names and descriptions you write. Treat your tool description as part of your UX.
+
+### Recommended Transport: Streamable HTTP
+
+Per official OpenAI docs, **Streamable HTTP is the recommended transport** for production. SSE (HTTP + Server-Sent Events) is supported but considered legacy.
+
+| Transport | Status | Use When |
+|-----------|--------|----------|
+| `stdio` | ✅ Active | Local MCP Inspector, Claude Desktop |
+| `SSE` | ⚠️ Legacy | Remote testing with ngrok (currently used here) |
+| `Streamable HTTP` | ✅ Recommended | Production deployments to ChatGPT |
+
+To upgrade to Streamable HTTP, use `StreamableHttpServerTransport` from the SDK:
+```typescript
+import { StreamableHttpServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+```
+
+### Tool Annotations (Required by ChatGPT)
+
+Per the OpenAI Apps SDK docs, ChatGPT **requires** tool annotations that describe potential impact. Add these to `registerTool()`:
+
+```typescript
+server.registerTool("get_offers", {
+  description: "...",
+  inputSchema: GetOffersInputZodShape,
+  annotations: {
+    readOnlyHint: true,      // ✅ we only READ data, never write
+    openWorldHint: false,    // ✅ scoped to Synchrony Marketplace only
+    destructiveHint: false,  // ✅ no deletes or irreversible actions
+  },
+}, handler);
+```
+
+| Annotation | Our Value | Why |
+|-----------|-----------|-----|
+| `readOnlyHint` | `true` | `get_offers` only fetches data |
+| `openWorldHint` | `false` | Scoped to Synchrony Marketplace, not arbitrary URLs |
+| `destructiveHint` | `false` | No writes or deletes |
+
+### What `structuredContent` Is (Future Enhancement)
+
+The OpenAI Apps SDK supports a richer tool response format:
+
+```typescript
+return {
+  structuredContent: { totalOffers: 3, offers: [...] }, // ← model reads this
+  content: [{ type: "text", text: "Found 3 offers." }], // ← narration
+  _meta: { rawApiResponse: ... },                        // ← widget only, hidden from model
+};
+```
+
+- `content` — what we return today (works for any MCP client)
+- `structuredContent` — concise JSON the model reasons about (ChatGPT-optimized)
+- `_meta` — large/sensitive data sent only to the UI widget, never to the model
+
+### Official References
+
+| Resource | Link |
+|----------|------|
+| OpenAI Apps SDK: Build MCP server | [developers.openai.com/apps-sdk/build/mcp-server](https://developers.openai.com/apps-sdk/build/mcp-server) |
+| MCP concept overview | [developers.openai.com/apps-sdk/concepts/mcp-server](https://developers.openai.com/apps-sdk/concepts/mcp-server/) |
+| TypeScript SDK (used in this project) | [github.com/modelcontextprotocol/typescript-sdk](https://github.com/modelcontextprotocol/typescript-sdk) |
+| MCP Specification | [spec.modelcontextprotocol.io](https://spec.modelcontextprotocol.io) |
+| MCP Inspector (testing tool) | [modelcontextprotocol.io/docs/tools/inspector](https://modelcontextprotocol.io/docs/tools/inspector) |
 
 ---
 
