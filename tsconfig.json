@@ -1,0 +1,37 @@
+{
+    "compilerOptions": {
+        // Target modern JavaScript (ES2022) for async/await, optional chaining, etc.
+        "target": "ES2022",
+        // Use NodeNext for module resolution – required for ES Modules in Node.js.
+        // This ensures TypeScript understands .js extensions in imports and ESM semantics.
+        "module": "NodeNext",
+        "moduleResolution": "NodeNext",
+        // Output compiled JS files into the /dist directory
+        "outDir": "./dist",
+        // Root source files live in /src
+        "rootDir": "./src",
+        // Enable all strict type-checking options (strict null checks, no implicit any, etc.)
+        "strict": true,
+        // Allow importing .json files directly in TypeScript
+        "resolveJsonModule": true,
+        // Ensure each file is treated as a proper module (important for ESM)
+        "isolatedModules": true,
+        // Emit .d.ts type declaration files alongside compiled JS (useful for library consumers)
+        "declaration": true,
+        // Generate source maps so debugging points to TS source, not compiled JS
+        "sourceMap": true,
+        // Skip type checking for node_modules to speed up compilation
+        "skipLibCheck": true,
+        // Use modern ECMAScript standard library types
+        "lib": [
+            "ES2022"
+        ]
+    },
+    "include": [
+        "src/**/*"
+    ],
+    "exclude": [
+        "node_modules",
+        "dist"
+    ]
+}
