@@ -24,3 +24,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Test scripts with hardcoded secrets (edit locally, never commit)
+scripts/test_natural_language.py

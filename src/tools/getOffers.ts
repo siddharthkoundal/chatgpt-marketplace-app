@@ -1,27 +1,55 @@
 /**
  * src/tools/getOffers.ts — handler for the `get_offers` MCP tool
  *
- * Called by McpServer after it has validated args against GetOffersInputZodShape.
- * Args are pre-typed as GetOffersInput — no manual Zod safeParse needed here.
+ * Called by McpServer after Zod validation. Args are pre-typed as GetOffersInput.
  *
- * Responsibilities:
- *   - Call the API client (currently mock, swap for real in synchronyClient.ts)
- *   - Handle "no results" gracefully (not an error, a valid state)
- *   - Wrap offers in a metadata envelope for ChatGPT to summarize
+ * TODO: return structuredContent + content separately for ChatGPT App Store
+ *   structuredContent → concise JSON the model reads
+ *   content           → human-readable narration
+ *   _meta             → rich data for the UI widget only (never reaches the model)
  */
 
-import { fetchOffersFromSynchrony } from "../api/synchronyClient.js";
-import type { GetOffersInput } from "../schemas/offerSchema.js";
+import { fetchOffers } from "../api/synchronyClient.js";
+import type { GetOffersInput, Offer } from "../schemas/offerSchema.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
-export async function handleGetOffers(args: GetOffersInput): Promise<CallToolResult> {
-    const { category, maxPrice } = args;
+/**
+ * Formats a single offer into a concise summary object for ChatGPT.
+ * Surfaces the most useful fields — brand, offerType, links, expiry.
+ * Omits raw image URLs and internal IDs which add noise without value.
+ */
+function formatOfferForChatGPT(offer: Offer) {
+    return {
+        offerId: offer.offerId,
+        title: offer.title,
+        subtitle: offer.subtitle,
+        offerType: offer.offerType?.name,
+        brand: {
+            name: offer.brand?.name,
+            featured: offer.brand?.featured,
+            industries: offer.brand?.industry?.map((i) => i.name),
+            network: offer.brand?.network?.name,
+            regions: offer.brand?.region,
+        },
+        links: offer.links?.map((l) => ({ label: l.linkLabel, url: l.linkUrl })),
+        keywords: offer.keywords,
+        expiryMsg: offer.expiryMsg,
+        startDate: offer.startDate,
+        endDate: offer.endDate,
+        disclosure: offer.disclosure,
+    };
+}
 
-    console.error(`[get_offers] category="${category}", maxPrice=${maxPrice ?? "none"}`);
+export async function handleGetOffers(args: GetOffersInput): Promise<CallToolResult> {
+    console.error(
+        `[get_offers] Filters — category: ${args.category ?? "none"}, industry: ${args.industry?.join(",") ?? "none"}, ` +
+        `offerType: ${args.offerType?.join(",") ?? "none"}, region: ${args.region ?? "none"}, ` +
+        `brand: ${args.brand ?? "none"}, featured: ${args.featured ?? "none"}`
+    );
 
     let offers;
     try {
-        offers = await fetchOffersFromSynchrony(category, maxPrice);
+        offers = await fetchOffers(args);
     } catch (err) {
         const message = err instanceof Error ? err.message : "Unexpected error fetching offers.";
         console.error("[get_offers] API error:", err);
@@ -32,18 +60,36 @@ export async function handleGetOffers(args: GetOffersInput): Promise<CallToolRes
     }
 
     if (offers.length === 0) {
-        const msg = maxPrice
-            ? `No offers found in "${category}" under $${maxPrice.toFixed(2)}.`
-            : `No offers found in "${category}".`;
-        return { content: [{ type: "text", text: msg }] };
+        const filterSummary = [
+            args.category && `category "${args.category}"`,
+            args.industry && `industry "${args.industry.join(", ")}"`,
+            args.offerType && `type "${args.offerType.join(", ")}"`,
+            args.region && `region "${args.region}"`,
+            args.brand && `brand "${args.brand}"`,
+        ].filter(Boolean).join(", ");
+
+        return {
+            content: [{
+                type: "text",
+                text: `No offers found${filterSummary ? ` for ${filterSummary}` : ""}.`,
+            }],
+        };
     }
 
-    // Envelope gives ChatGPT context (count, filters applied) alongside the offers.
-    // TODO (future): return structuredContent + content separately for ChatGPT App Store
-    //   structuredContent → concise JSON the model reads
-    //   content           → human-readable narration
-    //   _meta             → rich data for the UI widget only (never reaches the model)
-    const payload = { category, maxPrice: maxPrice ?? null, totalOffers: offers.length, offers };
+    const payload = {
+        totalOffers: offers.length,
+        appliedFilters: {
+            category: args.category,
+            industry: args.industry,
+            offerType: args.offerType,
+            region: args.region,
+            network: args.network,
+            brand: args.brand,
+            featured: args.featured,
+        },
+        offers: offers.map(formatOfferForChatGPT),
+    };
+
     console.error(`[get_offers] Returning ${offers.length} offer(s).`);
 
     return {

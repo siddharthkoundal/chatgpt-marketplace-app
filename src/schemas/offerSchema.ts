@@ -2,41 +2,247 @@
  * src/schemas/offerSchema.ts — Zod schemas and TypeScript types
  *
  * Single source of truth for data shapes. Zod enforces runtime type safety
- * at system boundaries (ChatGPT tool args, Synchrony API responses).
+ * at system boundaries (ChatGPT tool args, SYF Marketplace API responses).
+ *
+ * Schema aligned to the SYF Marketplace API shape (prototype).
+ * See Swagger at: [internal SYF API docs URL]
  *
  * Two input exports:
- *   - GetOffersInputZodShape  → raw shape object, passed to McpServer.registerTool()
+ *   - GetOffersInputZodShape  → raw shape, passed to McpServer.registerTool()
  *                               (SDK v1.x expects ZodRawShapeCompat, not a ZodObject)
- *   - GetOffersInputSchema    → wrapped ZodObject, used for explicit safeParse() in tests
+ *   - GetOffersInputSchema    → wrapped ZodObject, used for safeParse() in tests
  */
 
 import { z } from "zod";
 
+// ---------------------------------------------------------------------------
+// ENUMS — matched to real API filter values
+// ---------------------------------------------------------------------------
+
+export const INDUSTRY_VALUES = [
+    "FURNITURE",
+    "ELECTRONICS & APPLIANCES",
+    "HEALTHCARE & OPTICAL",
+    "HEALTH & WELLNESS",
+    "HEATING & AIR CONDITIONING",
+    "HOME IMPROVEMENT",
+    "JEWELRY",
+    "LAWN & GARDEN",
+    "MUSIC",
+] as const;
+
+export const OFFER_TYPE_VALUES = [
+    "DEALS",
+    "FINANCING OFFERS",
+    "EVERYDAY VALUE",
+] as const;
+
+export const REGION_VALUES = [
+    "MIDWEST",
+    "NORTHEAST",
+    "SOUTH",
+    "SOUTHEAST",
+    "WEST",
+] as const;
+
+export const NETWORK_VALUES = [
+    "SYF CAR CARE",
+    "SYF HOME",
+    "SYF FLOORING",
+    "SYF POWERSPORTS",
+] as const;
+
+// ---------------------------------------------------------------------------
+// INPUT SCHEMA — tool call args from ChatGPT
+//
+// Existing params (category, maxPrice) kept for backward compat.
+//   - `category` maps semantically to `industry` (free-text, case-insensitive)
+//   - `maxPrice` has no real API equivalent (financing offers don't have list prices)
+//     but is kept so existing tests and clients don't break
+//
+// New params mirror real API query parameters.
+// ---------------------------------------------------------------------------
+
 export const GetOffersInputZodShape = {
     category: z
         .string()
-        .min(1, "Category cannot be an empty string.")
-        .describe("The product category to search for (e.g., 'beds', 'electronics')."),
+        .min(1, "Category cannot be empty.")
+        .optional()
+        .describe("Product category keyword (e.g. 'furniture', 'electronics'). Maps to industry filter."),
 
     maxPrice: z
         .number()
-        .positive("maxPrice must be a positive number.")
+        .positive()
         .optional()
-        .describe("Optional maximum price filter in USD. Returns only offers at or below this price."),
+        .describe("Legacy price filter — not applicable to the real API (financing offers have no list price). Kept for backward compat."),
+
+    industry: z
+        .array(z.enum(INDUSTRY_VALUES))
+        .optional()
+        .describe(`Filter by industry. Valid values: ${INDUSTRY_VALUES.join(", ")}`),
+
+    offerType: z
+        .array(z.enum(OFFER_TYPE_VALUES))
+        .optional()
+        .describe(`Filter by offer type. Valid values: ${OFFER_TYPE_VALUES.join(", ")}`),
+
+    region: z
+        .enum(REGION_VALUES)
+        .optional()
+        .describe(`Filter by region. Valid values: ${REGION_VALUES.join(", ")}`),
+
+    network: z
+        .array(z.enum(NETWORK_VALUES))
+        .optional()
+        .describe(`Filter by SYF network. Valid values: ${NETWORK_VALUES.join(", ")}`),
+
+    brand: z
+        .string()
+        .optional()
+        .describe("Filter by brand/merchant name (e.g. 'Ashley', 'Sam's Club')."),
+
+    featured: z
+        .boolean()
+        .optional()
+        .describe("If true, return only featured brand offers."),
+
+    limitOffersCount: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Max number of offers to return (non-personalized only)."),
+
+    offset: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe("Pagination offset (non-personalized only)."),
 };
 
 export const GetOffersInputSchema = z.object(GetOffersInputZodShape);
 export type GetOffersInput = z.infer<typeof GetOffersInputSchema>;
 
+// ---------------------------------------------------------------------------
+// NESTED SCHEMAS — matching real API response object shapes
+// ---------------------------------------------------------------------------
+
+export const IndustrySchema = z.object({
+    name: z.string(),
+    icon: z.string().url().optional(),
+});
+
+export const NetworkSchema = z.object({
+    name: z.string(),
+    description: z.string().optional(),
+    icon: z.string().url().optional(),
+    pageUrl: z.string().url().optional(),
+});
+
+export const BrandSchema = z.object({
+    name: z.string(),
+    featured: z.boolean().optional(),
+    logo: z.string().url().optional(),
+    image: z.string().url().optional(),
+    priority: z.number().optional(),
+    productType: z.string().optional(),
+    industry: z.array(IndustrySchema).optional(),
+    network: NetworkSchema.optional(),
+    region: z.array(z.string()).optional(),
+});
+
+// Offer images come in multiple named sizes — use catchall to handle e.g. "318x510"
+export const OfferImageSchema = z.object({
+    default: z.string().url().optional(),
+}).catchall(z.string().url());
+
+export const OfferLinkSchema = z.object({
+    linkLabel: z.string(),
+    linkUrl: z.string().url(),
+    linkPlacement: z.number().int(),
+});
+
+export const OfferTypeSchema = z.object({
+    name: z.string(),
+    icon: z.string().url().optional(),
+});
+
+// ---------------------------------------------------------------------------
+// OFFER SCHEMA — single offer from the real API
+//
+// Legacy fields (price, discount, link) kept as optional for backward compat
+// with any existing tests/clients that relied on the old simplified schema.
+// New fields match the real API response exactly.
+// ---------------------------------------------------------------------------
+
 export const OfferSchema = z.object({
-    title: z.string().describe("The display name of the product offer."),
-    price: z.number().nonnegative("Price must be zero or positive.").describe("Price in USD."),
-    discount: z.string().optional().describe("Discount description, if applicable."),
-    // z.string().url() — note: must chain .url() on .string(), not call z.url() directly (fixed in code review)
-    link: z.string().url().describe("Direct URL to the product on Synchrony Marketplace."),
+    slotId: z.string().optional(),
+    groupId: z.string().optional(),
+    offerId: z.string().optional(),
+    title: z.string(),
+    subtitle: z.string().optional(),
+    disclosure: z.string().optional(),
+    keywords: z.array(z.string()).optional(),
+    offerImage: OfferImageSchema.optional(),
+    startDate: z.string().optional(), // "YYYY-MM-DD"
+    endDate: z.string().optional(),
+    offerType: OfferTypeSchema.optional(),
+    brand: BrandSchema.optional(),
+    productType: z.string().optional(),
+    links: z.array(OfferLinkSchema).optional(),
+    expiryMsg: z.string().optional(),
+
+    // Legacy fields — kept for backward compat (not present in real API)
+    price: z.number().nonnegative().optional(),
+    discount: z.string().optional(),
+    link: z.string().url().optional(),
 });
 
 export type Offer = z.infer<typeof OfferSchema>;
 
-export const OffersResponseSchema = z.array(OfferSchema);
-export type OffersResponse = z.infer<typeof OffersResponseSchema>;
+// Exported for full response validation when wiring in future real HTTP calls.
+
+export const PaginationSchema = z.object({
+    totalCount: z.number().int(),
+    limit: z.number().int(),
+    start: z.number().int(),
+});
+
+export const CampaignSchema = z.object({
+    campaignId: z.string().optional(),
+    variationId: z.string().optional(),
+    variationType: z.string().optional(),
+    name: z.string().optional(),
+    type: z.string().optional(),
+    title: z.string().optional(),
+    groups: z.array(z.string()).optional(),
+    decisionId: z.string().optional(),
+    userId: z.string().optional(),
+    sessionId: z.string().optional(),
+});
+
+export const AnalyticsMetadataSchema = z.object({
+    campaignId: z.number().optional(),
+    campaignName: z.string().optional(),
+    experienceId: z.number().optional(),
+    experienceName: z.string().optional(),
+    variationId: z.number().optional(),
+    variationName: z.string().optional(),
+});
+
+/**
+ * Full SYF API response shape (prototype).
+ * Use this to validate real API responses when wiring in the real HTTP call:
+ *   const apiData = SyfApiResponseSchema.parse(res.data);
+ */
+export const SyfApiResponseSchema = z.object({
+    requestId: z.string().optional(),
+    campaign: CampaignSchema.optional(),
+    offers: z.array(OfferSchema),
+    pagination: PaginationSchema.optional(),
+    analyticsMetadata: AnalyticsMetadataSchema.optional(),
+});
+
+export type SyfApiResponse = z.infer<typeof SyfApiResponseSchema>;
+export type OffersResponse = Offer[];

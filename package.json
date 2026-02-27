@@ -1,12 +1,12 @@
 {
-  "name": "synchrony-mcp-server",
+  "name": "chatgpt-app-mcp-server",
   "version": "1.0.0",
-  "description": "MCP Server for fetching live product offers from Synchrony Marketplace API",
+  "description": "MCP Server for fetching product offers from the Marketplace (prototype)",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "tsx src/index.ts",
-    "dev:http": "tsx src/server.ts",
+    "dev": "node --env-file=.env --import=tsx src/index.ts",
+    "dev:http": "node --env-file=.env --import=tsx src/server.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },
