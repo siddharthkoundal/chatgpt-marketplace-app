@@ -119,7 +119,7 @@ Here is the exact journey of a single tool call from ChatGPT to a response:
 
 ```
 1. ChatGPT sends:
-   { "method": "tools/call", "params": { "name": "get_offers", "arguments": { "category": "beds", "maxPrice": 1000 } } }
+   { "method": "tools/call", "params": { "name": "get_offers", "arguments": { "industry": ["FURNITURE"], "featured": true } } }
 
 2. src/index.ts (or server.ts) — McpServer receives the tool call
    └── SDK automatically validates args against GetOffersInputZodShape (Zod)
@@ -128,15 +128,17 @@ Here is the exact journey of a single tool call from ChatGPT to a response:
 
 3. src/tools/getOffers.ts :: handleGetOffers(args: GetOffersInput)
    └── No Zod safeParse here — SDK already guaranteed types are correct
-       └── calls fetchOffersFromSynchrony("beds", 1000)
+       └── calls fetchOffersFromSynchrony(args)
 
 4. src/api/synchronyClient.ts :: fetchOffersFromSynchrony()
-   └── Filters mock offers by category + price
+   └── Applies multi-param filters in order:
+       industry → category (legacy) → offerType → region → network → brand → featured → pagination
        └── Returns: Offer[]
 
-5. src/tools/getOffers.ts
-   └── Wraps in envelope: { category, totalOffers, offers: [...] }
-       └── Returns: { content: [{ type: "text", text: "<JSON string>" }] }
+5. src/tools/getOffers.ts :: formatOfferForChatGPT()
+   └── Strips raw image URLs + internal IDs (noise for the model)
+       └── Surfaces: brand, offerType, links, keywords, expiryMsg, disclosure
+       └── Wraps in envelope: { totalOffers, appliedFilters, offers: [...] }
 
 6. ChatGPT receives the JSON and presents offers to the user.
 ```
@@ -319,16 +321,28 @@ In `src/api/synchronyClient.ts`, replace the mock implementation with:
 ```typescript
 import axios from 'axios';
 
-const BASE_URL = process.env.SYNCHRONY_API_BASE_URL ?? '';
-const API_KEY  = process.env.SYNCHRONY_API_KEY ?? '';
-
-const response = await axios.get(`${BASE_URL}/offers`, {
-  headers: { Authorization: `Bearer ${API_KEY}` },
-  params: { category, maxPrice },
+const res = await axios.get(`${process.env.SYNCHRONY_API_BASE_URL}/getoffers`, {
+  headers: {
+    'X-SYF-API-KEY': process.env.SYNCHRONY_API_KEY,
+    'X-SYF-Channel-Name': process.env.SYNCHRONY_CHANNEL_NAME,
+  },
+  params: {
+    campaignMappingId: process.env.SYNCHRONY_CAMPAIGN_ID,
+    industry:          input.industry,
+    offerType:         input.offerType,
+    region:            input.region,
+    network:           input.network,
+    brand:             input.brand,
+    featured:          input.featured,
+    limitOffersCount:  input.limitOffersCount,
+    offset:            input.offset,
+  },
 });
 
-// This validates the real API response matches our Zod schema
-return OffersResponseSchema.parse(response.data);
+// SynchronyApiResponseSchema validates the full response shape at runtime —
+// catches any API contract drift immediately.
+const data = SynchronyApiResponseSchema.parse(res.data);
+return data.offers;
 ```
 
 The Zod schema in `src/schemas/offerSchema.ts` will automatically catch any shape mismatches between the real API and what our tool expects — acting as a live contract test.

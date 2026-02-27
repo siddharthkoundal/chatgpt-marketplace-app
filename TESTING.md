@@ -72,14 +72,21 @@ Expected response:
   "tools": [
     {
       "name": "get_offers",
-      "description": "Fetches live product offers from the Synchrony Marketplace API...",
+      "description": "Fetches product offers from the Synchrony Marketplace API. Filter by: industry (FURNITURE, ELECTRONICS & APPLIANCES, HOME IMPROVEMENT, etc.), offerType (DEALS, FINANCING OFFERS, EVERYDAY VALUE), region (MIDWEST, NORTHEAST, SOUTH, SOUTHEAST, WEST), network (SYNCHRONY HOME, SYNCHRONY CAR CARE, ...), brand name, or featured (true/false). Use 'category' for a free-text keyword search.",
       "inputSchema": {
         "type": "object",
         "properties": {
-          "category": { "type": "string" },
-          "maxPrice": { "type": "number" }
-        },
-        "required": ["category"]
+          "category":         { "type": "string" },
+          "industry":         { "type": "array", "items": { "type": "string", "enum": ["FURNITURE", "ELECTRONICS & APPLIANCES", "HOME IMPROVEMENT", "..." ] } },
+          "offerType":        { "type": "array", "items": { "type": "string", "enum": ["DEALS", "FINANCING OFFERS", "EVERYDAY VALUE"] } },
+          "region":           { "type": "string", "enum": ["MIDWEST", "NORTHEAST", "SOUTH", "SOUTHEAST", "WEST"] },
+          "network":          { "type": "array", "items": { "type": "string", "enum": ["SYNCHRONY HOME", "SYNCHRONY CAR CARE", "SYNCHRONY FLOORING", "SYNCHRONY POWERSPORTS"] } },
+          "brand":            { "type": "string" },
+          "featured":         { "type": "boolean" },
+          "limitOffersCount": { "type": "integer" },
+          "offset":           { "type": "integer" },
+          "maxPrice":         { "type": "number" }
+        }
       }
     }
   ]
@@ -90,25 +97,28 @@ Expected response:
 
 ### Step 5 — Run the Tool
 
-1. Click on **`get_offers`** in the tools list
-2. Fill in the arguments panel on the right:
+2. Fill in the arguments panel:
 
-| Field | Value | Notes |
-|-------|-------|-------|
-| `category` | `beds` | Try: `electronics`, `appliances` |
-| `maxPrice` | `1000` | Optional — leave blank for no price filter |
+| Field | Example Value | Notes |
+|-------|--------------|-------|
+| `industry` | `["FURNITURE"]` | Enum: FURNITURE, ELECTRONICS & APPLIANCES, HOME IMPROVEMENT, etc. |
+| `offerType` | `["DEALS"]` | Enum: DEALS, FINANCING OFFERS, EVERYDAY VALUE |
+| `region` | `"MIDWEST"` | Enum: MIDWEST, NORTHEAST, SOUTH, SOUTHEAST, WEST |
+| `network` | `["SYNCHRONY HOME"]` | Enum: SYNCHRONY HOME, SYNCHRONY CAR CARE, SYNCHRONY FLOORING, SYNCHRONY POWERSPORTS |
+| `brand` | `"Ashley"` | Substring match |
+| `featured` | `true` | Boolean |
+| `category` | `"furniture"` | Legacy free-text search (maps to industry/brand name) |
+| `limitOffersCount` | `3` | Optional pagination |
 
 3. Click **"Run Tool"**
 
 Expected response:
 ```json
 {
-  "content": [
-    {
-      "type": "text",
-      "text": "{\n  \"category\": \"beds\",\n  \"maxPrice\": 1000,\n  \"totalOffers\": 2,\n  \"offers\": [\n    {\n      \"title\": \"Serta Perfect Sleeper Queen Mattress\",\n      \"price\": 799.99,\n      \"discount\": \"15% off for Synchrony cardholders\",\n      \"link\": \"https://marketplace.synchrony.com/offers/beds-001\"\n    },\n    ...\n  ]\n}"
-    }
-  ]
+  "content": [{
+    "type": "text",
+    "text": "{\n  \"totalOffers\": 2,\n  \"appliedFilters\": { \"industry\": [\"FURNITURE\"] },\n  \"offers\": [\n    {\n      \"offerId\": \"offer-furniture-001\",\n      \"title\": \"Get up to a $100 Visa Prepaid Card\",\n      \"offerType\": \"DEALS\",\n      \"brand\": { \"name\": \"Ashley\", \"featured\": true, \"industries\": [\"FURNITURE\", \"HOME IMPROVEMENT\"], \"network\": \"SYNCHRONY HOME\" },\n      \"links\": [{ \"label\": \"Card Details\", \"url\": \"...\" }, { \"label\": \"Apply\", \"url\": \"...\" }],\n      \"expiryMsg\": \"Offer valid through Dec 2024\"\n    },\n    ...\n  ]\n}"
+  }]
 }
 ```
 
@@ -116,37 +126,67 @@ Expected response:
 
 ### Step 6 — Test Edge Cases
 
-Try these to verify validation and error handling work properly:
+Try these to verify filtering and edge case handling:
 
-#### ✅ Valid — no price filter
+#### ✅ Industry filter
+```json
+{ "industry": ["FURNITURE"] }
+```
+→ Returns Ashley + Rooms To Go offers.
+
+#### ✅ Offer type filter
+```json
+{ "offerType": ["FINANCING OFFERS"] }
+```
+→ Returns Rooms To Go and Best Buy financing offers.
+
+#### ✅ Network filter
+```json
+{ "network": ["SYNCHRONY CAR CARE"] }
+```
+→ Returns Express Oil Change offer only.
+
+#### ✅ Featured only
+```json
+{ "featured": true }
+```
+→ Returns Ashley, Samsung, Best Buy, Lowe's (featured: true).
+
+#### ✅ Region filter
+```json
+{ "industry": ["FURNITURE"], "region": "NORTHEAST" }
+```
+→ Returns only Ashley (Rooms To Go doesn't cover NORTHEAST in mock data).
+
+#### ✅ Brand substring match
+```json
+{ "brand": "best" }
+```
+→ Returns Best Buy offer.
+
+#### ✅ Legacy category filter (backward compat)
 ```json
 { "category": "electronics" }
 ```
-→ Returns all electronics offers.
+→ Returns Samsung + Best Buy (matches "ELECTRONICS & APPLIANCES" industry).
 
-#### ✅ Valid — tight price filter  
+#### ✅ No results
 ```json
-{ "category": "electronics", "maxPrice": 300 }
+{ "industry": ["JEWELRY"] }
 ```
-→ Returns only the Sony headphones ($279.99).
+→ Returns: `No offers found for industry "JEWELRY"` (no mock data for this industry).
 
-#### ✅ Valid — no results
+#### ❌ Invalid enum value
 ```json
-{ "category": "furniture" }
+{ "industry": ["BEDS"] }
 ```
-→ Returns friendly message: `No offers found in the "furniture" category.`
+→ SDK Zod validation error before handler is called: `Invalid enum value for industry`.
 
-#### ❌ Invalid — missing required field
+#### ❌ Invalid type
 ```json
-{ "maxPrice": 500 }
+{ "featured": "yes" }
 ```
-→ Returns Zod validation error: `[category]: Required`
-
-#### ❌ Invalid — wrong type
-```json
-{ "category": "beds", "maxPrice": "cheap" }
-```
-→ Returns Zod validation error: `[maxPrice]: Expected number, received string`
+→ SDK Zod validation error: `Expected boolean, received string`.
 
 ---
 
@@ -241,7 +281,7 @@ Then open MCP Inspector, set transport to SSE, set URL to the ngrok `/sse` URL, 
 | `POST /messages 400 Bad Request` | Missing `?sessionId=` param | Let the Inspector handle this — don't POST manually without the sessionId from the SSE endpoint event |
 | `POST /sse 404 Not Found` | Client posted to wrong URL | `/sse` is GET only. POST goes to `/messages` |
 | `No offers found` | Category not in mock data | Try: `beds`, `electronics`, `appliances` |
-| `Tool returns validation error` | Wrong arg type | `category` must be a string, `maxPrice` must be a number |
+| `Tool returns validation error` | Wrong arg type or invalid enum | `industry` must be an array of valid enum strings; `featured` must be boolean |
 
 ---
 
@@ -281,7 +321,7 @@ print(response.output_text)
 
 **What happens:**
 1. Responses API connects to your ngrok URL, calls `tools/list`, discovers `get_offers`
-2. Model decides to call `get_offers` with `{"category": "beds", "maxPrice": 1000}`
+2. Model decides to call `get_offers` with `{"industry": ["FURNITURE"], "featured": true}`
 3. Responses API calls `tools/call` on your server, gets back the offer JSON
 4. Model composes a response and returns it as `response.output_text`
 

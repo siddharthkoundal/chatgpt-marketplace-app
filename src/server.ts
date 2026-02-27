@@ -1,25 +1,30 @@
 /**
- * src/server.ts — HTTP/SSE transport entry point
+ * src/server.ts — HTTP transport entry point
  *
- * Runs the same MCP tools as src/index.ts but over HTTP using Server-Sent Events,
- * so remote clients (ChatGPT Agents SDK, ngrok) can connect.
+ * Exposes the same MCP tools as src/index.ts over HTTP for remote access.
  *
- * SSE protocol: two endpoints
- *   GET  /sse              → client opens persistent stream; server replies with sessionId
- *   POST /messages?sessionId=<id> → client sends JSON-RPC; server responds via the SSE stream
+ * TWO transports, both on port 3000:
  *
- * One McpServer instance per SSE connection (SSEServerTransport is stateful — it owns
- * the response stream for exactly one client). Sessions are stored in `activeSessions`.
+ *   Streamable HTTP  →  POST /mcp  (recommended, used by OpenAI Responses API)
+ *     Single endpoint, stateless per request. OpenAI's Responses API and modern
+ *     MCP clients connect here. Each request creates a fresh McpServer.
  *
- * Transport upgrade path (OpenAI recommendation):
- *   SSEServerTransport      → legacy, works today with MCP Inspector + ngrok
- *   StreamableHttpServerTransport → recommended for production ChatGPT integration
- *   Import from: @modelcontextprotocol/sdk/server/streamableHttp.js
+ *   SSE (legacy)     →  GET /sse + POST /messages  (used by MCP Inspector)
+ *     Two-endpoint stateful protocol. One McpServer per connection, sessions
+ *     stored in activeSessions map for routing POST /messages back to the right stream.
+ *
+ * Note: express.json() is NOT applied globally — SSEServerTransport.handlePostMessage
+ * reads the raw request body itself. Applying json() first causes "stream is not readable".
+ * Streamable HTTP uses express.json() only on its own /mcp route.
+ *
+ * Transport upgrade path if dropping SSE: remove the /sse + /messages routes and the
+ * activeSessions map. The /mcp route alone is sufficient for all modern clients.
  */
 
 import express from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 import { handleGetOffers } from "./tools/getOffers.js";
 import { GetOffersInputZodShape } from "./schemas/offerSchema.js";
@@ -28,6 +33,7 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
 const SERVER_NAME = "synchrony-marketplace-mcp";
 const SERVER_VERSION = "1.0.0";
 
+// SSE session registry — Streamable HTTP is stateless and doesn't need this.
 const activeSessions = new Map<
     string,
     { transport: SSEServerTransport; server: McpServer }
@@ -42,10 +48,13 @@ function createMcpServer(): McpServer {
         "get_offers",
         {
             description: [
-                "Fetches live product offers from the Synchrony Marketplace API.",
-                "Use this tool when the user asks about available products, deals, or financing options",
-                "in a specific category (e.g., 'beds', 'electronics', 'appliances').",
-                "Optionally filter results by a maximum price.",
+                "Fetches product offers from the Synchrony Marketplace API.",
+                "Filter by: industry (FURNITURE, ELECTRONICS & APPLIANCES, HOME IMPROVEMENT, etc.),",
+                "offerType (DEALS, FINANCING OFFERS, EVERYDAY VALUE),",
+                "region (MIDWEST, NORTHEAST, SOUTH, SOUTHEAST, WEST),",
+                "network (SYNCHRONY HOME, SYNCHRONY CAR CARE, SYNCHRONY FLOORING, SYNCHRONY POWERSPORTS),",
+                "brand name (e.g. 'Ashley', 'Best Buy'), or featured (true/false).",
+                "Use 'category' for a free-text keyword search across industry and brand names.",
             ].join(" "),
             inputSchema: GetOffersInputZodShape,
         },
@@ -57,6 +66,36 @@ function createMcpServer(): McpServer {
 
 const app = express();
 
+// ---------------------------------------------------------------------------
+// STREAMABLE HTTP — POST /mcp
+// Used by: OpenAI Responses API, modern MCP clients
+// Stateless: each request spins up a fresh McpServer + transport pair.
+// ---------------------------------------------------------------------------
+app.post("/mcp", express.json(), async (req, res) => {
+    console.log(`[${SERVER_NAME}] Streamable HTTP request from ${req.ip}`);
+    const server = createMcpServer();
+    const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined, // stateless mode
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+});
+
+// Streamable HTTP requires GET /mcp for SSE streaming of long responses.
+app.get("/mcp", async (req, res) => {
+    console.log(`[${SERVER_NAME}] Streamable HTTP GET /mcp from ${req.ip}`);
+    const server = createMcpServer();
+    const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+    });
+    await server.connect(transport);
+    await transport.handleRequest(req, res);
+});
+
+// ---------------------------------------------------------------------------
+// SSE (LEGACY) — GET /sse + POST /messages
+// Used by: MCP Inspector, older clients
+// ---------------------------------------------------------------------------
 app.get("/sse", async (req, res) => {
     console.log(`[${SERVER_NAME}] New SSE connection from ${req.ip}`);
     const transport = new SSEServerTransport("/messages", res);
@@ -66,16 +105,14 @@ app.get("/sse", async (req, res) => {
 
     const sessionId = transport.sessionId;
     activeSessions.set(sessionId, { transport, server });
-    console.log(`[${SERVER_NAME}] Session started: ${sessionId}`);
+    console.log(`[${SERVER_NAME}] SSE session started: ${sessionId}`);
 
     res.on("close", () => {
-        console.log(`[${SERVER_NAME}] Session closed: ${sessionId}`);
+        console.log(`[${SERVER_NAME}] SSE session closed: ${sessionId}`);
         activeSessions.delete(sessionId);
     });
 });
 
-// express.json() intentionally NOT used globally — SSEServerTransport.handlePostMessage
-// reads the raw request body stream itself. Parsing it first causes "stream is not readable".
 app.post("/messages", async (req, res) => {
     const sessionId = req.query.sessionId as string;
 
@@ -93,15 +130,27 @@ app.post("/messages", async (req, res) => {
     await session.transport.handlePostMessage(req, res);
 });
 
+// ---------------------------------------------------------------------------
+// HEALTH CHECK
+// ---------------------------------------------------------------------------
 app.get("/health", (_req, res) => {
-    res.json({ status: "ok", server: SERVER_NAME, version: SERVER_VERSION, activeSessions: activeSessions.size });
+    res.json({
+        status: "ok",
+        server: SERVER_NAME,
+        version: SERVER_VERSION,
+        activeSessions: activeSessions.size,
+        endpoints: {
+            streamableHttp: "POST /mcp  ← OpenAI Responses API",
+            sse: "GET  /sse  ← MCP Inspector (legacy)",
+        },
+    });
 });
 
 app.listen(PORT, () => {
     console.log(`\n🚀 ${SERVER_NAME} v${SERVER_VERSION} running on port ${PORT}`);
-    console.log(`\n   SSE endpoint:    http://localhost:${PORT}/sse`);
-    console.log(`   Message endpoint: http://localhost:${PORT}/messages`);
-    console.log(`   Health check:     http://localhost:${PORT}/health`);
+    console.log(`\n   Streamable HTTP: http://localhost:${PORT}/mcp   ← OpenAI Responses API`);
+    console.log(`   SSE (legacy):    http://localhost:${PORT}/sse   ← MCP Inspector`);
+    console.log(`   Health check:    http://localhost:${PORT}/health`);
     console.log(`\n   Run ngrok:  ngrok http ${PORT}`);
-    console.log(`   Then use the ngrok URL as your MCP server URL in ChatGPT.\n`);
+    console.log(`   OpenAI script URL: https://<ngrok-url>/mcp\n`);
 });

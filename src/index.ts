@@ -28,10 +28,13 @@ server.registerTool(
     "get_offers",
     {
         description: [
-            "Fetches live product offers from the Synchrony Marketplace API.",
-            "Use this tool when the user asks about available products, deals, or financing options",
-            "in a specific category (e.g., 'beds', 'electronics', 'appliances').",
-            "Optionally filter results by a maximum price.",
+            "Fetches product offers from the Synchrony Marketplace API.",
+            "Filter by: industry (FURNITURE, ELECTRONICS & APPLIANCES, HOME IMPROVEMENT, etc.),",
+            "offerType (DEALS, FINANCING OFFERS, EVERYDAY VALUE),",
+            "region (MIDWEST, NORTHEAST, SOUTH, SOUTHEAST, WEST),",
+            "network (SYNCHRONY HOME, SYNCHRONY CAR CARE, SYNCHRONY FLOORING, SYNCHRONY POWERSPORTS),",
+            "brand name (e.g. 'Ashley', 'Best Buy'), or featured (true/false).",
+            "Use 'category' for a free-text keyword search across industry and brand names.",
         ].join(" "),
         inputSchema: GetOffersInputZodShape,
     },
