@@ -2,10 +2,10 @@
  * src/schemas/offerSchema.ts — Zod schemas and TypeScript types
  *
  * Single source of truth for data shapes. Zod enforces runtime type safety
- * at system boundaries (ChatGPT tool args, Synchrony API responses).
+ * at system boundaries (ChatGPT tool args, SYF Marketplace API responses).
  *
- * Schema aligned to real Synchrony Marketplace API as of Feb 2026.
- * See Swagger at: [internal Synchrony API docs URL]
+ * Schema aligned to the SYF Marketplace API shape (prototype).
+ * See Swagger at: [internal SYF API docs URL]
  *
  * Two input exports:
  *   - GetOffersInputZodShape  → raw shape, passed to McpServer.registerTool()
@@ -46,10 +46,10 @@ export const REGION_VALUES = [
 ] as const;
 
 export const NETWORK_VALUES = [
-    "SYNCHRONY CAR CARE",
-    "SYNCHRONY HOME",
-    "SYNCHRONY FLOORING",
-    "SYNCHRONY POWERSPORTS",
+    "SYF CAR CARE",
+    "SYF HOME",
+    "SYF FLOORING",
+    "SYF POWERSPORTS",
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -64,7 +64,6 @@ export const NETWORK_VALUES = [
 // ---------------------------------------------------------------------------
 
 export const GetOffersInputZodShape = {
-    // --- Existing (backward compat) ---
     category: z
         .string()
         .min(1, "Category cannot be empty.")
@@ -77,7 +76,6 @@ export const GetOffersInputZodShape = {
         .optional()
         .describe("Legacy price filter — not applicable to the real API (financing offers have no list price). Kept for backward compat."),
 
-    // --- New params matching real API ---
     industry: z
         .array(z.enum(INDUSTRY_VALUES))
         .optional()
@@ -96,7 +94,7 @@ export const GetOffersInputZodShape = {
     network: z
         .array(z.enum(NETWORK_VALUES))
         .optional()
-        .describe(`Filter by Synchrony network. Valid values: ${NETWORK_VALUES.join(", ")}`),
+        .describe(`Filter by SYF network. Valid values: ${NETWORK_VALUES.join(", ")}`),
 
     brand: z
         .string()
@@ -179,7 +177,6 @@ export const OfferTypeSchema = z.object({
 // ---------------------------------------------------------------------------
 
 export const OfferSchema = z.object({
-    // Real API fields
     slotId: z.string().optional(),
     groupId: z.string().optional(),
     offerId: z.string().optional(),
@@ -204,10 +201,7 @@ export const OfferSchema = z.object({
 
 export type Offer = z.infer<typeof OfferSchema>;
 
-// ---------------------------------------------------------------------------
-// PAGINATION + CAMPAIGN + ANALYTICS — top-level real API response wrappers
-// These are exported for use when the real API is wired in (synchronyClient.ts).
-// ---------------------------------------------------------------------------
+// Exported for full response validation when wiring in future real HTTP calls.
 
 export const PaginationSchema = z.object({
     totalCount: z.number().int(),
@@ -238,11 +232,11 @@ export const AnalyticsMetadataSchema = z.object({
 });
 
 /**
- * Full Synchrony API response shape.
+ * Full SYF API response shape (prototype).
  * Use this to validate real API responses when wiring in the real HTTP call:
- *   const apiData = SynchronyApiResponseSchema.parse(res.data);
+ *   const apiData = SyfApiResponseSchema.parse(res.data);
  */
-export const SynchronyApiResponseSchema = z.object({
+export const SyfApiResponseSchema = z.object({
     requestId: z.string().optional(),
     campaign: CampaignSchema.optional(),
     offers: z.array(OfferSchema),
@@ -250,5 +244,5 @@ export const SynchronyApiResponseSchema = z.object({
     analyticsMetadata: AnalyticsMetadataSchema.optional(),
 });
 
-export type SynchronyApiResponse = z.infer<typeof SynchronyApiResponseSchema>;
+export type SyfApiResponse = z.infer<typeof SyfApiResponseSchema>;
 export type OffersResponse = Offer[];

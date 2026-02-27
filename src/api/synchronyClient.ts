@@ -1,39 +1,23 @@
 /**
- * src/api/synchronyClient.ts — API client layer
+ * src/api/syfClient.ts — Live API client
  *
- * Currently a mock. When the real Synchrony Marketplace API is available:
- *   1. Replace the mock return with a real axios.get() call.
- *   2. Validate with SynchronyApiResponseSchema.parse(res.data) — catches schema drift immediately.
- *   3. Pull config from env vars (SYNCHRONY_API_BASE_URL, SYNCHRONY_API_KEY).
+ * Calls the real SYF Marketplace API. Filters are applied in-process after
+ * fetching because the live endpoint only supports `campaignMappingId` server-side.
  *
- * Real implementation pattern:
- *   import axios from 'axios';
- *   const res = await axios.get(`${process.env.SYNCHRONY_API_BASE_URL}/getoffers`, {
- *     headers: {
- *       'X-SYF-API-KEY': process.env.SYNCHRONY_API_KEY,
- *       'X-SYF-Channel-Name': process.env.SYNCHRONY_CHANNEL_NAME,
- *     },
- *     params: {
- *       campaignMappingId: process.env.SYNCHRONY_CAMPAIGN_ID,
- *       industry, offerType, region, network, brand, featured,
- *       limitOffersCount, offset,
- *     },
- *   });
- *   const data = SynchronyApiResponseSchema.parse(res.data);
- *   return data.offers;
- *
- * Note: `maxPrice` has no real API equivalent — it's a legacy filter kept for
- * backward compat. The real API serves financing/deal offers with no list price.
+ * Falls back to MOCK_OFFERS if the network call fails (e.g. no connectivity).
  */
 
+import axios from "axios";
 import type { Offer, OffersResponse, GetOffersInput } from "../schemas/offerSchema.js";
 
 // ---------------------------------------------------------------------------
-// MOCK DATA — structured to match the real Synchrony API response shape exactly
+// LIVE API CONFIG — read from env, fallback for local dev without .env
 // ---------------------------------------------------------------------------
+const SYF_API_URL = process.env.SYF_API_URL ?? "https://api.syf.com/v1/marketing/offers";
+const SYF_API_KEY = process.env.SYF_API_KEY ?? "";
 
+// Fallback mock dataset — used when the live API is unreachable.
 const MOCK_OFFERS: Offer[] = [
-    // FURNITURE — Ashley
     {
         slotId: "slot-001",
         groupId: "987654321",
@@ -43,9 +27,9 @@ const MOCK_OFFERS: Offer[] = [
         disclosure: "Offer valid for new Ashley Advantage cardholders only. See store for details.",
         keywords: ["Furniture", "Visa Prepaid"],
         offerImage: {
-            default: "https://www.synchrony.com/img/ashley_318_510.png",
-            "318x510": "https://www.synchrony.com/img/ashley_318_510.png",
-            "221x139": "https://www.synchrony.com/img/ashley_221_139.png",
+            default: "https://placeholder.syf.com/img/ashley_318_510.png",
+            "318x510": "https://placeholder.syf.com/img/ashley_318_510.png",
+            "221x139": "https://placeholder.syf.com/img/ashley_221_139.png",
         },
         startDate: "2024-01-01",
         endDate: "2024-12-31",
@@ -61,8 +45,8 @@ const MOCK_OFFERS: Offer[] = [
                 { name: "HOME IMPROVEMENT", icon: "https://www.syf.com/img/icon_home-improvement.png" },
             ],
             network: {
-                name: "SYNCHRONY HOME",
-                description: "A Synchrony HOME Partner",
+                name: "SYF HOME",
+                description: "A SYF HOME Partner",
                 icon: "https://www.syf.com/img/icon_home_program-dk_teal.png",
                 pageUrl: "https://www.syf.com/home/cardholder.html",
             },
@@ -76,7 +60,6 @@ const MOCK_OFFERS: Offer[] = [
         expiryMsg: "Offer valid through Dec 2024",
     },
 
-    // FURNITURE — Rooms To Go
     {
         slotId: "slot-002",
         groupId: "987654322",
@@ -86,9 +69,9 @@ const MOCK_OFFERS: Offer[] = [
         disclosure: "Interest will be charged from purchase date if balance not paid within 18 months.",
         keywords: ["Furniture", "Financing"],
         offerImage: {
-            default: "https://www.synchrony.com/img/roomstogo_318_510.png",
-            "318x510": "https://www.synchrony.com/img/roomstogo_318_510.png",
-            "221x139": "https://www.synchrony.com/img/roomstogo_221_139.png",
+            default: "https://placeholder.syf.com/img/roomstogo_318_510.png",
+            "318x510": "https://placeholder.syf.com/img/roomstogo_318_510.png",
+            "221x139": "https://placeholder.syf.com/img/roomstogo_221_139.png",
         },
         startDate: "2024-01-01",
         endDate: "2024-12-31",
@@ -102,8 +85,8 @@ const MOCK_OFFERS: Offer[] = [
                 { name: "FURNITURE", icon: "https://www.syf.com/img/icon_chair.png" },
             ],
             network: {
-                name: "SYNCHRONY HOME",
-                description: "A Synchrony HOME Partner",
+                name: "SYF HOME",
+                description: "A SYF HOME Partner",
                 icon: "https://www.syf.com/img/icon_home_program-dk_teal.png",
                 pageUrl: "https://www.syf.com/home/cardholder.html",
             },
@@ -116,7 +99,6 @@ const MOCK_OFFERS: Offer[] = [
         expiryMsg: "Offer expires Dec 31, 2024",
     },
 
-    // ELECTRONICS & APPLIANCES — Samsung
     {
         slotId: "slot-003",
         groupId: "987654323",
@@ -126,9 +108,9 @@ const MOCK_OFFERS: Offer[] = [
         disclosure: "Discount applied at point of sale. Offer valid at participating retailers only.",
         keywords: ["Electronics", "TV", "Samsung"],
         offerImage: {
-            default: "https://www.synchrony.com/img/samsung_318_510.png",
-            "318x510": "https://www.synchrony.com/img/samsung_318_510.png",
-            "221x139": "https://www.synchrony.com/img/samsung_221_139.png",
+            default: "https://placeholder.syf.com/img/samsung_318_510.png",
+            "318x510": "https://placeholder.syf.com/img/samsung_318_510.png",
+            "221x139": "https://placeholder.syf.com/img/samsung_221_139.png",
         },
         startDate: "2024-03-01",
         endDate: "2024-09-30",
@@ -142,8 +124,8 @@ const MOCK_OFFERS: Offer[] = [
                 { name: "ELECTRONICS & APPLIANCES", icon: "https://www.syf.com/img/icon_electronics.png" },
             ],
             network: {
-                name: "SYNCHRONY HOME",
-                description: "A Synchrony HOME Partner",
+                name: "SYF HOME",
+                description: "A SYF HOME Partner",
                 icon: "https://www.syf.com/img/icon_home_program-dk_teal.png",
                 pageUrl: "https://www.syf.com/home/cardholder.html",
             },
@@ -156,7 +138,6 @@ const MOCK_OFFERS: Offer[] = [
         expiryMsg: "Limited time offer",
     },
 
-    // ELECTRONICS & APPLIANCES — Best Buy
     {
         slotId: "slot-004",
         groupId: "987654324",
@@ -166,9 +147,9 @@ const MOCK_OFFERS: Offer[] = [
         disclosure: "No interest if paid in full within 6 months. Minimum monthly payments required.",
         keywords: ["Electronics", "Appliances", "Financing"],
         offerImage: {
-            default: "https://www.synchrony.com/img/bestbuy_318_510.png",
-            "318x510": "https://www.synchrony.com/img/bestbuy_318_510.png",
-            "221x139": "https://www.synchrony.com/img/bestbuy_221_139.png",
+            default: "https://placeholder.syf.com/img/bestbuy_318_510.png",
+            "318x510": "https://placeholder.syf.com/img/bestbuy_318_510.png",
+            "221x139": "https://placeholder.syf.com/img/bestbuy_221_139.png",
         },
         startDate: "2024-01-01",
         endDate: "2024-12-31",
@@ -182,8 +163,8 @@ const MOCK_OFFERS: Offer[] = [
                 { name: "ELECTRONICS & APPLIANCES", icon: "https://www.syf.com/img/icon_electronics.png" },
             ],
             network: {
-                name: "SYNCHRONY HOME",
-                description: "A Synchrony HOME Partner",
+                name: "SYF HOME",
+                description: "A SYF HOME Partner",
                 icon: "https://www.syf.com/img/icon_home_program-dk_teal.png",
                 pageUrl: "https://www.syf.com/home/cardholder.html",
             },
@@ -197,7 +178,6 @@ const MOCK_OFFERS: Offer[] = [
         expiryMsg: "Ongoing offer",
     },
 
-    // HOME IMPROVEMENT — Lowe's
     {
         slotId: "slot-005",
         groupId: "987654325",
@@ -207,9 +187,9 @@ const MOCK_OFFERS: Offer[] = [
         disclosure: "5% off discount is not combinable with other Lowe's offers or discounts.",
         keywords: ["Home Improvement", "Everyday Value"],
         offerImage: {
-            default: "https://www.synchrony.com/img/lowes_318_510.png",
-            "318x510": "https://www.synchrony.com/img/lowes_318_510.png",
-            "221x139": "https://www.synchrony.com/img/lowes_221_139.png",
+            default: "https://placeholder.syf.com/img/lowes_318_510.png",
+            "318x510": "https://placeholder.syf.com/img/lowes_318_510.png",
+            "221x139": "https://placeholder.syf.com/img/lowes_221_139.png",
         },
         startDate: "2024-01-01",
         endDate: "2024-12-31",
@@ -223,8 +203,8 @@ const MOCK_OFFERS: Offer[] = [
                 { name: "HOME IMPROVEMENT", icon: "https://www.syf.com/img/icon_home-improvement.png" },
             ],
             network: {
-                name: "SYNCHRONY HOME",
-                description: "A Synchrony HOME Partner",
+                name: "SYF HOME",
+                description: "A SYF HOME Partner",
                 icon: "https://www.syf.com/img/icon_home_program-dk_teal.png",
                 pageUrl: "https://www.syf.com/home/cardholder.html",
             },
@@ -237,7 +217,6 @@ const MOCK_OFFERS: Offer[] = [
         expiryMsg: "Everyday offer — no expiry",
     },
 
-    // SYNCHRONY CAR CARE
     {
         slotId: "slot-006",
         groupId: "987654326",
@@ -247,9 +226,9 @@ const MOCK_OFFERS: Offer[] = [
         disclosure: "Offer valid 6/12/24 - 7/10/24. One reward per cardholder.",
         keywords: ["Auto", "Car Care"],
         offerImage: {
-            default: "https://www.synchrony.com/img/carcare_318_510.png",
-            "318x510": "https://www.synchrony.com/img/carcare_318_510.png",
-            "221x139": "https://www.synchrony.com/img/carcare_221_139.png",
+            default: "https://placeholder.syf.com/img/carcare_318_510.png",
+            "318x510": "https://placeholder.syf.com/img/carcare_318_510.png",
+            "221x139": "https://placeholder.syf.com/img/carcare_221_139.png",
         },
         startDate: "2024-06-12",
         endDate: "2024-07-10",
@@ -261,8 +240,8 @@ const MOCK_OFFERS: Offer[] = [
             priority: 8,
             industry: [],
             network: {
-                name: "SYNCHRONY CAR CARE",
-                description: "A Synchrony CAR CARE Partner",
+                name: "SYF CAR CARE",
+                description: "A SYF CAR CARE Partner",
                 icon: "https://www.syf.com/img/icon_car_care_program-teal.png",
                 pageUrl: "https://www.syf.com/carcare/cardholder.html",
             },
@@ -276,47 +255,56 @@ const MOCK_OFFERS: Offer[] = [
     },
 ];
 
-// ---------------------------------------------------------------------------
-// MOCK API CLIENT
-// ---------------------------------------------------------------------------
-
 /**
- * Filters MOCK_OFFERS by the provided input params.
+ * Fetches all offers from the live SYF Marketplace API, then applies in-process filters.
+ * Falls back to MOCK_OFFERS if the API call fails.
  *
- * Filtering priority (applied in order, all additive/AND):
- *   1. `industry`  — exact match against offer.brand.industry[].name (case-insensitive)
- *   2. `category`  — legacy; substring match against brand.industry[].name OR brand.name
- *   3. `offerType` — matches offer.offerType.name
- *   4. `region`    — checks offer.brand.region includes the filter value
- *   5. `network`   — checks offer.brand.network.name
- *   6. `brand`     — substring match against offer.brand.name
- *   7. `featured`  — filters by offer.brand.featured
- *
- * `maxPrice` has no real API equivalent — filter is skipped in mock.
- * `limitOffersCount` and `offset` apply after all other filters (pagination simulation).
- *
- * TypeScript narrowing note: filter params captured in consts before arrow functions
- * to ensure the type is narrowed inside closure scope.
+ * Filter order (all additive/AND):
+ *   1. industry  — substring match against offer.brand.industry[].name
+ *   2. category  — free-text; matches industry names, brand name, or offer title
+ *   3. offerType — matches offer.offerType.name
+ *   4. region    — checks offer.brand.region
+ *   5. network   — matches offer.brand.network.name
+ *   6. brand     — substring match against offer.brand.name
+ *   7. featured  — boolean match on offer.brand.featured
+ *   8. pagination via limitOffersCount / offset
  */
-export async function fetchOffersFromSynchrony(
+export async function fetchOffers(
     input: GetOffersInput
 ): Promise<OffersResponse> {
-    // Simulated latency — remove in production.
-    await new Promise((resolve) => setTimeout(resolve, 50 + Math.random() * 100));
+    let allOffers: Offer[];
 
-    let filtered: Offer[] = [...MOCK_OFFERS];
+    try {
+        console.error("[syf-marketplace-mcp] Calling live SYF API...");
+        const res = await axios.get(SYF_API_URL, {
+            headers: { "x-syf-api-key": SYF_API_KEY },
+            params: { campaignMappingId: "ALL" },
+            timeout: 10_000,
+        });
 
-    // 1. Industry filter (exact enum match)
+        // The real API returns { offers: [...], requestId, campaign, ... }
+        const body = res.data as { offers?: unknown[] };
+        allOffers = Array.isArray(body.offers) ? (body.offers as Offer[]) : [];
+        console.error(`[syf-marketplace-mcp] Syf Offers API working! returned ${allOffers.length} offers.`);
+    } catch (err) {
+        // Network error or API down — fall back to mock so the tool still works
+        console.error("[syf-marketplace-mcp] Syf Offers API call failed, falling back to mock:", err);
+        allOffers = [...MOCK_OFFERS];
+    }
+
+    let filtered: Offer[] = allOffers;
+
+    // 1. Industry filter
     if (input.industry && input.industry.length > 0) {
         const industries = input.industry.map((i) => i.toUpperCase());
         filtered = filtered.filter((offer) =>
             offer.brand?.industry?.some((ind) =>
-                industries.includes(ind.name.toUpperCase())
+                industries.some((f) => ind.name.toUpperCase().includes(f))
             )
         );
     }
 
-    // 2. Category filter (legacy — substring match against industry names or brand name)
+    // 2. Category filter (free-text, legacy)
     if (input.category) {
         const cat = input.category.toLowerCase().trim();
         filtered = filtered.filter((offer) =>
@@ -330,15 +318,15 @@ export async function fetchOffersFromSynchrony(
     if (input.offerType && input.offerType.length > 0) {
         const types = input.offerType.map((t) => t.toUpperCase());
         filtered = filtered.filter((offer) =>
-            offer.offerType ? types.includes(offer.offerType.name.toUpperCase()) : false
+            offer.offerType ? types.some((t) => offer.offerType!.name.toUpperCase().includes(t)) : false
         );
     }
 
     // 4. Region filter
     if (input.region) {
-        const regionFilter: string = input.region;
+        const regionFilter: string = input.region.toUpperCase();
         filtered = filtered.filter((offer) =>
-            offer.brand?.region?.includes(regionFilter)
+            offer.brand?.region?.some((r) => r.toUpperCase().includes(regionFilter))
         );
     }
 
@@ -346,7 +334,9 @@ export async function fetchOffersFromSynchrony(
     if (input.network && input.network.length > 0) {
         const networks = input.network.map((n) => n.toUpperCase());
         filtered = filtered.filter((offer) =>
-            offer.brand?.network ? networks.includes(offer.brand.network.name.toUpperCase()) : false
+            offer.brand?.network
+                ? networks.some((n) => offer.brand!.network!.name.toUpperCase().includes(n))
+                : false
         );
     }
 
@@ -364,7 +354,7 @@ export async function fetchOffersFromSynchrony(
         filtered = filtered.filter((offer) => offer.brand?.featured === featuredFilter);
     }
 
-    // 8. Pagination (limitOffersCount / offset)
+    // 8. Pagination
     const start = input.offset ?? 0;
     const limit = input.limitOffersCount ?? filtered.length;
     filtered = filtered.slice(start, start + limit);

@@ -1,21 +1,15 @@
 /**
  * src/tools/getOffers.ts — handler for the `get_offers` MCP tool
  *
- * Called by McpServer after it has validated args against GetOffersInputZodShape.
- * Args are pre-typed as GetOffersInput — no manual Zod safeParse needed here.
+ * Called by McpServer after Zod validation. Args are pre-typed as GetOffersInput.
  *
- * Responsibilities:
- *   - Call the API client (currently mock, swap for real in synchronyClient.ts)
- *   - Handle "no results" gracefully (not an error, a valid state)
- *   - Format the richer real-API offer shape into a clean ChatGPT-readable summary
- *
- * TODO (future): return structuredContent + content separately for ChatGPT App Store
+ * TODO: return structuredContent + content separately for ChatGPT App Store
  *   structuredContent → concise JSON the model reads
  *   content           → human-readable narration
  *   _meta             → rich data for the UI widget only (never reaches the model)
  */
 
-import { fetchOffersFromSynchrony } from "../api/synchronyClient.js";
+import { fetchOffers } from "../api/synchronyClient.js";
 import type { GetOffersInput, Offer } from "../schemas/offerSchema.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
@@ -55,7 +49,7 @@ export async function handleGetOffers(args: GetOffersInput): Promise<CallToolRes
 
     let offers;
     try {
-        offers = await fetchOffersFromSynchrony(args);
+        offers = await fetchOffers(args);
     } catch (err) {
         const message = err instanceof Error ? err.message : "Unexpected error fetching offers.";
         console.error("[get_offers] API error:", err);

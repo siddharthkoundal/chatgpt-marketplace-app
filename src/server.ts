@@ -1,24 +1,16 @@
 /**
  * src/server.ts — HTTP transport entry point
  *
- * Exposes the same MCP tools as src/index.ts over HTTP for remote access.
- *
- * TWO transports, both on port 3000:
+ * TWO transports on port 3000:
  *
  *   Streamable HTTP  →  POST /mcp  (recommended, used by OpenAI Responses API)
- *     Single endpoint, stateless per request. OpenAI's Responses API and modern
- *     MCP clients connect here. Each request creates a fresh McpServer.
+ *     Stateless per request. Each request creates a fresh McpServer.
  *
  *   SSE (legacy)     →  GET /sse + POST /messages  (used by MCP Inspector)
- *     Two-endpoint stateful protocol. One McpServer per connection, sessions
- *     stored in activeSessions map for routing POST /messages back to the right stream.
+ *     Stateful. One McpServer per connection; sessions stored in activeSessions.
  *
  * Note: express.json() is NOT applied globally — SSEServerTransport.handlePostMessage
- * reads the raw request body itself. Applying json() first causes "stream is not readable".
- * Streamable HTTP uses express.json() only on its own /mcp route.
- *
- * Transport upgrade path if dropping SSE: remove the /sse + /messages routes and the
- * activeSessions map. The /mcp route alone is sufficient for all modern clients.
+ * reads the raw body itself. Applying json() globally causes "stream is not readable".
  */
 
 import express from "express";
@@ -30,7 +22,7 @@ import { handleGetOffers } from "./tools/getOffers.js";
 import { GetOffersInputZodShape } from "./schemas/offerSchema.js";
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-const SERVER_NAME = "synchrony-marketplace-mcp";
+const SERVER_NAME = "syf-marketplace-mcp";
 const SERVER_VERSION = "1.0.0";
 
 // SSE session registry — Streamable HTTP is stateless and doesn't need this.
@@ -48,11 +40,11 @@ function createMcpServer(): McpServer {
         "get_offers",
         {
             description: [
-                "Fetches product offers from the Synchrony Marketplace API.",
+                "Fetches product offers from the SYF Marketplace API (prototype).",
                 "Filter by: industry (FURNITURE, ELECTRONICS & APPLIANCES, HOME IMPROVEMENT, etc.),",
                 "offerType (DEALS, FINANCING OFFERS, EVERYDAY VALUE),",
                 "region (MIDWEST, NORTHEAST, SOUTH, SOUTHEAST, WEST),",
-                "network (SYNCHRONY HOME, SYNCHRONY CAR CARE, SYNCHRONY FLOORING, SYNCHRONY POWERSPORTS),",
+                "network (SYF HOME, SYF CAR CARE, SYF FLOORING, SYF POWERSPORTS),",
                 "brand name (e.g. 'Ashley', 'Best Buy'), or featured (true/false).",
                 "Use 'category' for a free-text keyword search across industry and brand names.",
             ].join(" "),

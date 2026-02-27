@@ -2,11 +2,7 @@
  * src/index.ts — stdio transport entry point
  *
  * Runs the MCP server over stdin/stdout for local development and MCP Inspector.
- * For remote/ngrok access, use src/server.ts (HTTP/SSE transport) instead.
- *
- * SDK: @modelcontextprotocol/sdk v1.x — uses McpServer (high-level API).
- * Transport upgrade path: swap StdioServerTransport for StreamableHttpServerTransport
- * when moving to production (OpenAI recommends Streamable HTTP over SSE).
+ * For remote/ngrok access, use src/server.ts (HTTP transport) instead.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -15,7 +11,7 @@ import { handleGetOffers } from "./tools/getOffers.js";
 import { GetOffersInputZodShape } from "./schemas/offerSchema.js";
 
 const server = new McpServer({
-    name: "synchrony-marketplace-mcp",
+    name: "syf-marketplace-mcp",
     version: "1.0.0",
 });
 
@@ -28,11 +24,11 @@ server.registerTool(
     "get_offers",
     {
         description: [
-            "Fetches product offers from the Synchrony Marketplace API.",
+            "Fetches product offers from the SYF Marketplace API (prototype).",
             "Filter by: industry (FURNITURE, ELECTRONICS & APPLIANCES, HOME IMPROVEMENT, etc.),",
             "offerType (DEALS, FINANCING OFFERS, EVERYDAY VALUE),",
             "region (MIDWEST, NORTHEAST, SOUTH, SOUTHEAST, WEST),",
-            "network (SYNCHRONY HOME, SYNCHRONY CAR CARE, SYNCHRONY FLOORING, SYNCHRONY POWERSPORTS),",
+            "network (SYF HOME, SYF CAR CARE, SYF FLOORING, SYF POWERSPORTS),",
             "brand name (e.g. 'Ashley', 'Best Buy'), or featured (true/false).",
             "Use 'category' for a free-text keyword search across industry and brand names.",
         ].join(" "),
@@ -44,12 +40,12 @@ server.registerTool(
 async function main(): Promise<void> {
     const transport = new StdioServerTransport();
     // Logs go to stderr — MCP protocol messages use stdout.
-    console.error("[synchrony-marketplace-mcp] Starting (stdio)...");
+    console.error("[syf-marketplace-mcp] Starting (stdio)...");
     await server.connect(transport);
-    console.error("[synchrony-marketplace-mcp] Ready.");
+    console.error("[syf-marketplace-mcp] Ready.");
 }
 
 main().catch((err) => {
-    console.error("[synchrony-marketplace-mcp] FATAL:", err);
+    console.error("[syf-marketplace-mcp] FATAL:", err);
     process.exit(1);
 });

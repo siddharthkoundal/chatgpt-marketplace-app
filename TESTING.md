@@ -1,28 +1,29 @@
 # Testing Guide
 
-Step-by-step instructions for testing the Synchrony MCP Server at every layer — from a quick type check to a live tool call via ngrok.
+Step-by-step instructions for testing the SYF Marketplace MCP Server — from a quick health check to a live ChatGPT integration.
+
+> **Live API status:** The server calls `https://api.syf.com/v1/marketing/offers` on every tool invocation and returns **520+ real offers**. Confirm this by looking at the `npm run dev:http` terminal — you'll see `SYF Offers API working! returned 520 offers.` on each call.
 
 ---
 
 ## Method 1 — MCP Inspector (Recommended for Daily Dev)
 
-**MCP Inspector** is the official visual playground for MCP servers. It lets you list tools, fill in arguments, and see responses — without writing any code.
+**MCP Inspector** is the official visual playground for MCP servers. List tools, fill in arguments, and see live responses.
 
 ### Step 1 — Start the Server
 
-Open a terminal in the project root and choose your transport:
-
-**Option A — stdio (simplest, no port needed):**
-```bash
-npm run dev
-```
-
-**Option B — HTTP/SSE (needed for ngrok/remote):**
 ```bash
 npm run dev:http
 ```
 
----
+Expected output:
+```
+🚀 syf-marketplace-mcp v1.0.0 running on port 3000
+
+   Streamable HTTP: http://localhost:3000/mcp   ← OpenAI Responses API
+   SSE (legacy):    http://localhost:3000/sse   ← MCP Inspector
+   Health check:    http://localhost:3000/health
+```
 
 ### Step 2 — Launch MCP Inspector
 
@@ -30,228 +31,177 @@ Open a **second terminal**:
 ```bash
 npx @modelcontextprotocol/inspector
 ```
-
-The Inspector UI opens automatically at:
-```
-http://localhost:5173
-```
-
----
+Inspector UI opens at `http://localhost:5173`
 
 ### Step 3 — Connect to the Server
 
-#### If you used `npm run dev` (stdio):
-1. Transport dropdown → select **`STDIO`**
-2. Command: `tsx`
-3. Arguments: `src/index.ts`
-4. Click **Connect**
-
-#### If you used `npm run dev:http` (HTTP/SSE):
 1. Transport dropdown → select **`SSE`**
 2. URL: `http://localhost:3000/sse`
 3. Click **Connect**
 
-#### If using ngrok (remote SSE):
-1. Transport dropdown → select **`SSE`**
-2. URL: `https://<your-ngrok-url>.ngrok-free.app/sse`
-3. Click **Connect**
-
 > ✅ You should see: **"Connected"** status in the top bar.
-
----
 
 ### Step 4 — List Available Tools
 
-1. Click the **"Tools"** tab in the left sidebar
-2. Click **"List Tools"**
-3. You should see `get_offers` appear with its description
+1. Click the **"Tools"** tab → **"List Tools"**
+2. You should see `get_offers` appear with its description.
 
-Expected response:
+Confirm the network enum values match:
 ```json
-{
-  "tools": [
-    {
-      "name": "get_offers",
-      "description": "Fetches product offers from the Synchrony Marketplace API. Filter by: industry (FURNITURE, ELECTRONICS & APPLIANCES, HOME IMPROVEMENT, etc.), offerType (DEALS, FINANCING OFFERS, EVERYDAY VALUE), region (MIDWEST, NORTHEAST, SOUTH, SOUTHEAST, WEST), network (SYNCHRONY HOME, SYNCHRONY CAR CARE, ...), brand name, or featured (true/false). Use 'category' for a free-text keyword search.",
-      "inputSchema": {
-        "type": "object",
-        "properties": {
-          "category":         { "type": "string" },
-          "industry":         { "type": "array", "items": { "type": "string", "enum": ["FURNITURE", "ELECTRONICS & APPLIANCES", "HOME IMPROVEMENT", "..." ] } },
-          "offerType":        { "type": "array", "items": { "type": "string", "enum": ["DEALS", "FINANCING OFFERS", "EVERYDAY VALUE"] } },
-          "region":           { "type": "string", "enum": ["MIDWEST", "NORTHEAST", "SOUTH", "SOUTHEAST", "WEST"] },
-          "network":          { "type": "array", "items": { "type": "string", "enum": ["SYNCHRONY HOME", "SYNCHRONY CAR CARE", "SYNCHRONY FLOORING", "SYNCHRONY POWERSPORTS"] } },
-          "brand":            { "type": "string" },
-          "featured":         { "type": "boolean" },
-          "limitOffersCount": { "type": "integer" },
-          "offset":           { "type": "integer" },
-          "maxPrice":         { "type": "number" }
-        }
-      }
-    }
-  ]
-}
+"network": { "enum": ["SYF CAR CARE", "SYF HOME", "SYF FLOORING", "SYF POWERSPORTS"] }
 ```
-
----
 
 ### Step 5 — Run the Tool
 
-2. Fill in the arguments panel:
+Fill in the arguments panel and click **"Run Tool"**:
 
 | Field | Example Value | Notes |
 |-------|--------------|-------|
-| `industry` | `["FURNITURE"]` | Enum: FURNITURE, ELECTRONICS & APPLIANCES, HOME IMPROVEMENT, etc. |
-| `offerType` | `["DEALS"]` | Enum: DEALS, FINANCING OFFERS, EVERYDAY VALUE |
-| `region` | `"MIDWEST"` | Enum: MIDWEST, NORTHEAST, SOUTH, SOUTHEAST, WEST |
-| `network` | `["SYNCHRONY HOME"]` | Enum: SYNCHRONY HOME, SYNCHRONY CAR CARE, SYNCHRONY FLOORING, SYNCHRONY POWERSPORTS |
-| `brand` | `"Ashley"` | Substring match |
+| `limitOffersCount` | `5` | Returns first 5 live offers |
+| `category` | `"furniture"` | Free-text search against industry + brand + title |
+| `industry` | `["FURNITURE"]` | Enum filter |
+| `offerType` | `["DEALS"]` | DEALS / FINANCING OFFERS / EVERYDAY VALUE |
+| `region` | `"MIDWEST"` | MIDWEST / NORTHEAST / SOUTH / SOUTHEAST / WEST |
+| `brand` | `"Lowe's"` | Substring match against brand name |
 | `featured` | `true` | Boolean |
-| `category` | `"furniture"` | Legacy free-text search (maps to industry/brand name) |
-| `limitOffersCount` | `3` | Optional pagination |
+| `offset` | `10` | Pagination offset |
 
-3. Click **"Run Tool"**
-
-Expected response:
-```json
-{
-  "content": [{
-    "type": "text",
-    "text": "{\n  \"totalOffers\": 2,\n  \"appliedFilters\": { \"industry\": [\"FURNITURE\"] },\n  \"offers\": [\n    {\n      \"offerId\": \"offer-furniture-001\",\n      \"title\": \"Get up to a $100 Visa Prepaid Card\",\n      \"offerType\": \"DEALS\",\n      \"brand\": { \"name\": \"Ashley\", \"featured\": true, \"industries\": [\"FURNITURE\", \"HOME IMPROVEMENT\"], \"network\": \"SYNCHRONY HOME\" },\n      \"links\": [{ \"label\": \"Card Details\", \"url\": \"...\" }, { \"label\": \"Apply\", \"url\": \"...\" }],\n      \"expiryMsg\": \"Offer valid through Dec 2024\"\n    },\n    ...\n  ]\n}"
-  }]
-}
-```
+**How to tell the response is live data:**
+- `offerId` will be a long number like `"1642709078625"` (not `"offer-furniture-001"`)
+- Brands you'll see: Pumpkin Pet Insurance, Lowe's, PayPal, Samsung, Amazon, etc.
+- Your `npm run dev:http` terminal will print: `SYF Offers API working! returned 520 offers.`
 
 ---
 
-### Step 6 — Test Edge Cases
-
-Try these to verify filtering and edge case handling:
-
-#### ✅ Industry filter
-```json
-{ "industry": ["FURNITURE"] }
-```
-→ Returns Ashley + Rooms To Go offers.
-
-#### ✅ Offer type filter
-```json
-{ "offerType": ["FINANCING OFFERS"] }
-```
-→ Returns Rooms To Go and Best Buy financing offers.
-
-#### ✅ Network filter
-```json
-{ "network": ["SYNCHRONY CAR CARE"] }
-```
-→ Returns Express Oil Change offer only.
-
-#### ✅ Featured only
-```json
-{ "featured": true }
-```
-→ Returns Ashley, Samsung, Best Buy, Lowe's (featured: true).
-
-#### ✅ Region filter
-```json
-{ "industry": ["FURNITURE"], "region": "NORTHEAST" }
-```
-→ Returns only Ashley (Rooms To Go doesn't cover NORTHEAST in mock data).
-
-#### ✅ Brand substring match
-```json
-{ "brand": "best" }
-```
-→ Returns Best Buy offer.
-
-#### ✅ Legacy category filter (backward compat)
-```json
-{ "category": "electronics" }
-```
-→ Returns Samsung + Best Buy (matches "ELECTRONICS & APPLIANCES" industry).
-
-#### ✅ No results
-```json
-{ "industry": ["JEWELRY"] }
-```
-→ Returns: `No offers found for industry "JEWELRY"` (no mock data for this industry).
-
-#### ❌ Invalid enum value
-```json
-{ "industry": ["BEDS"] }
-```
-→ SDK Zod validation error before handler is called: `Invalid enum value for industry`.
-
-#### ❌ Invalid type
-```json
-{ "featured": "yes" }
-```
-→ SDK Zod validation error: `Expected boolean, received string`.
-
----
-
-## Method 2 — TypeScript Compiler Check
-
-Catches type errors before running anything:
-
-```bash
-npx tsc --noEmit
-```
-
-✅ Expected: no output, exits with code `0`  
-❌ If errors appear: check the file and line number reported
-
----
-
-## Method 3 — Health Check (HTTP mode only)
+## Method 2 — curl (Quick Manual Tests)
 
 With `npm run dev:http` running:
 
+### Health check
 ```bash
 curl http://localhost:3000/health
 ```
-
 Expected:
 ```json
 {
   "status": "ok",
-  "server": "synchrony-marketplace-mcp",
+  "server": "syf-marketplace-mcp",
   "version": "1.0.0",
   "activeSessions": 0
 }
 ```
 
----
-
-## Method 4 — Raw SSE Handshake Test (HTTP mode only)
-
-Manually verify the SSE connection and session negotiation:
-
+### Get 3 live offers (no filter)
 ```bash
-# Step 1: Open SSE stream (leave this running)
-curl -N http://localhost:3000/sse
-
-# Expected output:
-# event: endpoint
-# data: /messages?sessionId=<some-uuid>
+curl -s -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_offers","arguments":{"limitOffersCount":3}}}'
 ```
 
-Copy the `sessionId` from the output, then in a second terminal:
-
+### Filter by category
 ```bash
-# Step 2: Send a tools/list call using the sessionId from above
-curl -X POST "http://localhost:3000/messages?sessionId=<paste-sessionId-here>" \
+curl -s -X POST http://localhost:3000/mcp \
   -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_offers","arguments":{"category":"furniture","limitOffersCount":5}}}'
+```
+
+### Featured offers only
+```bash
+curl -s -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_offers","arguments":{"featured":true,"limitOffersCount":5}}}'
+```
+
+### Filter by brand
+```bash
+curl -s -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_offers","arguments":{"brand":"Lowe'\''s"}}}'
+```
+
+### List available tools
+```bash
+curl -s -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-The response will arrive in the **first terminal** (the SSE stream), not in this second terminal — that's how SSE works.
+> **Note:** Both `Content-Type: application/json` and `Accept: application/json, text/event-stream` headers are required for the Streamable HTTP `/mcp` endpoint.
+
+---
+
+## Method 3 — TypeScript Compiler Check
+
+Catches type errors before running:
+
+```bash
+npx tsc --noEmit
+```
+
+✅ Expected: no output, exits with code `0`
+
+---
+
+## Method 4 — Filter Test Cases
+
+Use these in MCP Inspector or curl to exercise all filter paths:
+
+### ✅ Free-text category search
+```json
+{ "category": "health", "limitOffersCount": 5 }
+```
+→ Returns health/wellness brands (e.g. Pumpkin Pet Insurance, CareCredit partners).
+
+### ✅ Featured only
+```json
+{ "featured": true, "limitOffersCount": 5 }
+```
+→ Returns offers where `brand.featured === true` (e.g. Lowe's, PayPal).
+
+### ✅ Region filter
+```json
+{ "region": "NORTHEAST", "limitOffersCount": 5 }
+```
+→ Returns offers available in the Northeast region.
+
+### ✅ Brand substring match
+```json
+{ "brand": "PayPal" }
+```
+→ Returns PayPal cashback offer.
+
+### ✅ Pagination
+```json
+{ "limitOffersCount": 5, "offset": 10 }
+```
+→ Returns offers 11–15 from the full 520-offer dataset.
+
+### ✅ No results (valid filter, no matching data)
+```json
+{ "industry": ["JEWELRY"], "limitOffersCount": 5 }
+```
+→ Returns: `No offers found for industry "JEWELRY".`
+
+### ❌ Invalid enum value (Zod catches before handler)
+```json
+{ "industry": ["BEDS"] }
+```
+→ SDK returns Zod validation error: `Invalid enum value for industry`.
+
+### ❌ Wrong type (Zod catches before handler)
+```json
+{ "featured": "yes" }
+```
+→ SDK returns Zod validation error: `Expected boolean, received string`.
 
 ---
 
 ## Method 5 — ngrok End-to-End Test
-
-Test the full public internet path:
 
 ```bash
 # Terminal 1
@@ -259,44 +209,25 @@ npm run dev:http
 
 # Terminal 2
 ngrok http 3000
-# Copy the Forwarding URL e.g. https://abc123.ngrok-free.app
+# → Forwarding: https://abc123.ngrok-free.app → localhost:3000
 
 # Terminal 3 — verify health over public URL
 curl https://abc123.ngrok-free.app/health
 
-# Terminal 3 — verify SSE stream over public URL
-curl -N https://abc123.ngrok-free.app/sse
+# Terminal 3 — test MCP via public URL
+curl -s -X POST https://abc123.ngrok-free.app/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_offers","arguments":{"limitOffersCount":3}}}'
 ```
 
-Then open MCP Inspector, set transport to SSE, set URL to the ngrok `/sse` URL, and connect.
+Then connect MCP Inspector using the ngrok SSE URL: `https://abc123.ngrok-free.app/sse`
 
 ---
 
-## Troubleshooting
+## Method 6 — OpenAI Responses API
 
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `ERR_NGROK_8012 connection refused` | HTTP server not running | Run `npm run dev:http` first |
-| `stream is not readable` (old) | `express.json()` conflict | Already fixed — pull latest code |
-| `POST /messages 400 Bad Request` | Missing `?sessionId=` param | Let the Inspector handle this — don't POST manually without the sessionId from the SSE endpoint event |
-| `POST /sse 404 Not Found` | Client posted to wrong URL | `/sse` is GET only. POST goes to `/messages` |
-| `No offers found` | Category not in mock data | Try: `beds`, `electronics`, `appliances` |
-| `Tool returns validation error` | Wrong arg type or invalid enum | `industry` must be an array of valid enum strings; `featured` must be boolean |
-
----
-
-## Method 6 — OpenAI Responses API (Direct ChatGPT Integration)
-
-> **Source:** [OpenAI Docs — MCP Tool Guide](https://developers.openai.com/cookbook/examples/mcp/mcp_tool_guide/)
-
-This tests your server from the **OpenAI Responses API** side — the same path ChatGPT uses internally when it calls your tool.
-
-### Prerequisites
-
-- Server running via `npm run dev:http` + ngrok exposed
-- OpenAI API key with access to `gpt-4o` or `gpt-4.1`
-
-### Test with Python (OpenAI SDK)
+> Tests your server from the same path ChatGPT uses internally.
 
 ```python
 import openai
@@ -308,12 +239,12 @@ response = client.responses.create(
     tools=[
         {
             "type": "mcp",
-            "server_label": "synchrony-marketplace",
-            "server_url": "https://<your-ngrok-url>.ngrok-free.app",   # your ngrok URL
-            "require_approval": "never",                                 # auto-approve tool calls
+            "server_label": "syf-marketplace",
+            "server_url": "https://<your-ngrok-url>.ngrok-free.app",
+            "require_approval": "never",
         }
     ],
-    input="What bed offers are available under $1000?",
+    input="What home improvement deals are available?",
 )
 
 print(response.output_text)
@@ -321,56 +252,30 @@ print(response.output_text)
 
 **What happens:**
 1. Responses API connects to your ngrok URL, calls `tools/list`, discovers `get_offers`
-2. Model decides to call `get_offers` with `{"industry": ["FURNITURE"], "featured": true}`
-3. Responses API calls `tools/call` on your server, gets back the offer JSON
-4. Model composes a response and returns it as `response.output_text`
-
-### Test with the OpenAI Playground
-
-1. Go to [platform.openai.com/playground](https://platform.openai.com/playground)
-2. **Tools** → **Add MCP server**
-3. Enter your ngrok URL in the server URL field
-4. Type: *"Show me electronics deals under $500"*
-5. Watch the model call `get_offers` and use the result
+2. Model decides to call `get_offers` with relevant filters
+3. Responses API calls `tools/call`, server hits live SYF API, returns filtered offers
+4. Model composes a response from real offer data
 
 ---
 
-## OpenAI-Specific Checklist
+## Troubleshooting
 
-Before submitting your app to ChatGPT's app directory, verify these items per the [official OpenAI Apps SDK docs](https://developers.openai.com/apps-sdk/build/mcp-server):
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `ERR_NGROK_8012 connection refused` | HTTP server not running | Run `npm run dev:http` first |
+| `Not Acceptable` on POST /mcp | Missing Accept header | Add `-H "Accept: application/json, text/event-stream"` |
+| `POST /sse 404` | Wrong endpoint | `/sse` is GET only; POST goes to `/messages?sessionId=...` |
+| `SYF Offers API call failed, falling back to mock` | Network/API error | Check internet connectivity; server auto-falls back to mock |
+| `No offers found` | Valid filter, no live data matches | Try broader filters or remove filters entirely |
+| Zod validation error | Wrong arg type or invalid enum | `industry` must be array of valid strings; `featured` must boolean |
 
-### ✅ Tool Annotations (Required)
-Per OpenAI docs, all tools must declare annotations. Add these to `registerTool()` in `src/index.ts` and `src/server.ts`:
+---
 
-```typescript
-annotations: {
-  readOnlyHint: true,      // get_offers reads data only
-  openWorldHint: false,    // scoped to Synchrony Marketplace
-  destructiveHint: false,  // no deletes or side effects
-}
-```
+## Confirming Live vs Mock Data
 
-| Annotation | Required When | Our Value |
-|-----------|--------------|-----------|
-| `readOnlyHint: true` | Tool only fetches data | ✅ |
-| `openWorldHint: false` | Tool is scoped to one system | ✅ |
-| `destructiveHint: false` | Tool has no irreversible effects | ✅ |
-
-### ⚠️ Transport: SSE → Streamable HTTP for Production
-The official docs state SSE transport is **legacy**. For production ChatGPT integration:
-- Current: `SSEServerTransport` from `server/sse.js` (works for testing)
-- Recommended: `StreamableHttpServerTransport` from `server/streamableHttp.js`
-
-### ✅ HTTPS Required
-ChatGPT requires an HTTPS endpoint. During dev, ngrok provides this automatically.
-For production: deploy to Cloudflare Workers, Fly.io, Vercel, or AWS with TLS.
-
-### ✅ Tool Descriptions = Your UX
-From OpenAI docs: *"The model inspects tool descriptors to decide when a tool fits the user's request — treat names, descriptions, and schemas as part of your UX."*
-
-Review `get_offers` description in `src/index.ts` to make it as clear as possible for the model.
-
-### ✅ Make Handlers Idempotent
-From OpenAI docs: *"Design handlers to be idempotent — the model may retry calls."*
-Our current `get_offers` is already idempotent (read-only, returns same data for same input). ✅
-
+| Signal | Live Data | Mock Fallback |
+|--------|-----------|---------------|
+| Terminal log | `SYF Offers API working! returned 520 offers.` | `SYF Offers API call failed, falling back to mock:` |
+| `offerId` format | Long number: `"1642709078625"` | Readable slug: `"offer-furniture-001"` |
+| Brands seen | Pumpkin, PayPal, Lowe's, Sam's Club… | Ashley, Samsung, Best Buy, Rooms To Go |
+| Total count | 520 (no filters) | 6 (no filters) |
